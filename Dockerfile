@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Rialo AgentPay — multi-stage build
 # Build context: repository root. Requires BuildKit.
 
