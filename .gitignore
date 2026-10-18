@@ -1,0 +1,59 @@
+# Proposal — project .gitignore (for a future independent project repository)
+# NOT active in the current dotfiles-managed tree; to be used when the operator
+# approves the repository migration (see migration plan below). Corrected in
+# G12.8 (local build/cache/state trees) and G12.12 (on-chain deployment tools
+# and QA debug shots) to exclude everything the security audits flagged.
+
+# Build output — root and every tool crate
+/target/
+tools/agentpay-signer/target/
+tools/deploy-testnet/target/
+tools/repair-deploy/target/
+tools/latch-transport-shim/target/
+
+# On-chain program deployment/repair tools — these can sign and broadcast
+# chain transactions using operator-held keypair files. Chain-ops tooling:
+# kept OUT of the application repository unless separately authorized and
+# security-reviewed.
+tools/deploy-testnet/
+tools/repair-deploy/
+
+# Internal QA debug screenshots (dashboard/final/redesign comparisons)
+frontend/.qa/
+
+# Local-only SDK reference checkouts / sibling trees (not build deps; deps
+# resolve from crates.io via Cargo.lock)
+vendor/
+rialo-agentpay/
+rialo-rust/
+
+# Local development databases / embedded PG state
+/*.db
+/pgdata/
+*.dump
+
+# Environment & secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Session credentials / cookies
+*cookies*.txt
+cookies/
+*.cookie
+
+# Runtime artifacts (live payment/task state — sensitive; backup via the
+# documented operator procedure only, never committed)
+artifact/
+artifacts/
+
+# Protected prior-phase workstream (separate workstream, never published here)
+_phase9/
+
+# Local-only caller scripts pending separate manual security review
+scripts/run-testnet-e2e.sh
+
+# Operator/local scratch
+*.log
+/cookie_test_*.txt
+/tmp/

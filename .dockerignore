@@ -1,0 +1,51 @@
+# Never enter the image context — secrets, credentials, wallet state.
+.env
+.env.*
+!.env.example
+artifact/
+artifacts/
+*.json.bak
+frontend/.qa/
+_phase9/
+_phase1/
+_archive_backups/
+_policy_migration_backup/
+_agentstats*.json
+_finalize_docs_baseline.json
+_p21_integrity_baseline.json
+_phase7_baseline.json
+_phase8_baseline.json
+
+# Isolated signer workspace: deliberately NOT part of the server image.
+# Funded agent keypairs must never be packaged or copied to a shared host.
+tools/agentpay-signer/target/
+tools/agentpay-signer/env.template
+tools/agentpay-signer/hardened_launch.sh
+tools/agentpay-signer/*.service
+
+# Local databases / logs / signer state
+*.db
+*.sqlite*
+*.log
+.pgpass
+review/
+rialo-rust/
+tools/e2e-fixture/
+tools/latch-transport-shim/
+tools/_baseline.py
+
+# VCS and CI (never needed inside the image)
+.git
+.gitignore
+.github/
+
+# Docs and reports (runbook/audit material — not runtime assets)
+*.md
+!README.md
+
+# Build outputs and QA scratch
+target/
+docker/
+Dockerfile*
+.dockerignore
+frontend/src/landing.css.bak

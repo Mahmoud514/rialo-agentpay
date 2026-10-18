@@ -1,0 +1,54 @@
+name: docker-build
+
+# Builds the server Docker image on every push to main and manual trigger.
+# Read-only: the image is built and locally cached by the runner — NO
+# registry push in this phase (G21.6 scope). GHCR publishing is a later,
+# separately-approved step. Free tier: ubuntu-latest runner, $0.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "wit/**"
+      - "frontend/src/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/docker-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Nightly toolchain matches the builder stage (rust:1.91 + nightly).
+      # Not strictly required for `docker build` (the container installs its
+      # own toolchain), but compiling once on the host keeps Cargo.lock
+      # honesty verified before the heavier container build.
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Verify lockfile integrity (host, cheap, before docker)
+        run: cargo +nightly fetch --locked
+
+      # Required for the GHA cache backend: the default `docker` driver
+      # cannot export caches (Cache export is not supported for the docker
+      # driver — run 38506909590). Buildx sets up a docker-container driver.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false # G21.6: no publishing yet
+          tags: rialo-agentpay:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

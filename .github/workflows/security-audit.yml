@@ -1,0 +1,25 @@
+name: security-audit
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 3 * * 1"   # weekly, Monday 03:00 UTC
+jobs:
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require committed Cargo.lock (audit must run against the real pin set)
+        run: |
+          if [ ! -f Cargo.lock ]; then
+            echo "::error::Cargo.lock is not committed to the repository."
+            echo "::error::The dependency audit must run against the actual pin set."
+            echo "::error::Commit Cargo.lock (required for binary crates) and re-run."
+            exit 1
+          fi
+      - name: Install pinned cargo-audit (user-local, no lockfile changes)
+        run: cargo install cargo-audit --locked --version 0.22.1
+      - name: Run dependency audit
+        run: cargo audit --file Cargo.lock
+        # FAILS the job on vulnerabilities; findings must be triaged by
+        # severity before production release. Fixes are separate review
+        # decisions — never automatic upgrades.

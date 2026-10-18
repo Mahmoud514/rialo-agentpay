@@ -1,0 +1,132 @@
+name: ci-tests
+
+# Isolated Rust CI for the AgentPay server test suite (filesystem mode).
+# Verified basis: G12.5 finding set — signer binary must exist before the
+# server test run, otherwise 9 channelauth tests silently skip while
+# reporting "ok". This job builds the signer first and hard-fails if the
+# expected binary is missing, making skips impossible.
+#
+# Scope guardrails:
+# - Filesystem-mode tests only. PostgreSQL/live-test mode is NOT enabled:
+#   AGENTPAY_PG_LIVE and AGENTPAY_STORAGE_MODE are intentionally never set
+#   here, and no database credentials, RPC endpoints, or secrets are provided.
+# - No deployment, no signer execution outside the test suite, no payments,
+#   broadcasts, or repair commands.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  server-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Require committed Cargo.lock (tests must run against the real pin set)
+        run: |
+          if [ ! -f Cargo.lock ]; then
+            echo "::error::Cargo.lock is not committed to the repository."
+            echo "::error::Tests must run against the actual dependency pin set."
+            echo "::error::Commit Cargo.lock (required for binary crates) and re-run."
+            exit 1
+          fi
+
+      - name: Install stable toolchain (signer build)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install nightly toolchain (server test command)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Build isolated signer binary (release, locked)
+        run: cargo build --release --locked --manifest-path tools/agentpay-signer/Cargo.toml
+
+      - name: Verify expected signer binary exists (fail fast, makes skips impossible)
+        run: |
+          test -f tools/agentpay-signer/target/release/agentpay-signer || {
+            echo "::error::signer binary missing at tools/agentpay-signer/target/release/agentpay-signer"
+            exit 1
+          }
+
+      - name: Run filesystem-mode server test suite
+        env:
+          # Ensures PostgreSQL/live-test mode cannot silently activate in
+          # this job: storage mode is pinned to filesystem (default), and
+          # the PG live gate is explicitly disabled.
+          AGENTPAY_PG_LIVE: "0"
+        # FS-mode only: pg_ tests require live-mode bootstrap (embedded PG
+        # archive download) and are run separately by the operator (runbook
+        # §8a/8b). --skip pg_ keeps this job hermetic.
+        run: cargo +nightly test --features server --bin server --locked -- --skip pg_ --skip transferswitch_tests
+
+  postgres-active-auth:
+    # G21.9: Active-mode PostgreSQL session/OAuth integration tests.
+    # Real authoritative wrappers run against a disposable Postgres service
+    # container via DATABASE_URL (init_blocking's production startup path).
+    # Synthetic identities only; no wallets, no payments, no signing.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: agentpay_ci
+          POSTGRES_PASSWORD: agentpay_ci
+          POSTGRES_DB: agentpay_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentpay_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AGENTPAY_STORAGE_MODE: postgres
+      DATABASE_URL: postgres://agentpay_ci:agentpay_ci@localhost:5432/agentpay_ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Wait for PostgreSQL readiness
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 -U agentpay_ci && exit 0
+            sleep 2
+          done
+          echo "::error::PostgreSQL service never became ready"
+          exit 1
+
+      - name: Run active-mode session/OAuth integration tests
+        run: |
+          # Schema is initialized by the test harness itself (fresh_schema →
+          # SCHEMA_V1 + SCHEMA_V3 migrations) on first client use; init_blocking
+          # also runs run_migrations on the global client, covering the
+          # production startup path.
+          cargo +nightly test --features server --bin server --locked \
+            -- pg_active_auth_tests --test-threads=1
+
+  transfer-killswitch-enabled:
+    # G21.11-FIX: enabled-state transfer kill-switch tests in a dedicated
+    # process (OnceLock determinism: env set before ANY gate read). The FS
+    # job skips these (transferswitch_tests) and skips pg_ tests; both jobs
+    # must pass — no silent skips anywhere.
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      AGENTPAY_DISABLE_TRANSFERS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Run enabled-state kill-switch tests (dedicated process)
+        run: |
+          cargo +nightly test --features server --bin server --locked \
+            -- transferswitch_tests --test-threads=1 --ignored

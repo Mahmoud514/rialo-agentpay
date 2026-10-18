@@ -1,0 +1,138 @@
+[package]
+name = "rialo-agentpay"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rialo-venus = "0.18.1"
+rialo-venus-proc-macro = "0.18.1"
+rialo-s-system-interface = "0.18.1"
+getrandom = { version = "0.2.17", features = ["custom"] }
+rialo-s-program = "0.18.1"
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+optional = true
+
+[dependencies.serde_json]
+version = "1.0"
+optional = true
+
+[dependencies.argon2]
+version = "0.5.3"
+default-features = false
+features = ["std", "password-hash"]
+optional = true
+
+[dependencies.tokio-postgres]
+version = "0.7"
+default-features = false
+features = ["runtime", "with-uuid-1", "with-serde_json-1"]
+optional = true
+
+[dependencies.postgresql_embedded]
+version = "=0.20.0"
+default-features = false
+features = ["tokio"]
+optional = true
+
+[features]
+implementation = [
+    "dep:serde",
+    "dep:serde_json",
+    "dep:tokio",
+    "dep:tokio-postgres",
+    "dep:rialo-s-keypair",
+    "dep:rialo-s-signer",
+]
+server = [
+    "dep:argon2",
+    "dep:axum",
+    "dep:dotenvy",
+    "dep:reqwest",
+    "dep:rialo-s-keypair",
+    "dep:rialo-s-pubkey",
+    "dep:rialo-s-signer",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:tokio",
+    "dep:tower-http",
+    "dep:uuid","dep:blake3", "dep:rialo-s-signature",
+    "dep:tokio-postgres",
+    "dep:postgresql_embedded",
+    ]
+
+[dependencies.axum]
+version = "0.8"
+optional = true
+
+[dependencies.dotenvy]
+version = "0.15"
+optional = true
+
+[dependencies.reqwest]
+version = "0.12"
+default-features = false
+# "blocking": the Phase-6 reconciliation address-scan lane is a synchronous
+# JSON-RPC call inside the spawn_blocking engine (see rialo.rs,
+# signatures_for_address). Read-only; the ONE RPC endpoint stays owned by
+# RialoConfig.
+features = ["json", "rustls-tls", "blocking"]
+optional = true
+
+[dependencies.rialo-s-keypair]
+version = "0.18.1"
+default-features = false
+optional = true
+
+# PHASE 9 STEP H-1 (hardened signer plane): the authenticated channel —
+# blake3 for the response digest + the rialo ed25519 signature type for the
+# channel identity. Both already in the lock (cached versions).
+[dependencies.blake3]
+version = "1"
+optional = true
+
+[dependencies.rialo-s-signature]
+version = "0.18.1"
+default-features = false
+optional = true
+
+# PHASE 9 I-6: pubkey-only address derivation for the verification
+# reader (server-side custody boundary). Read-only; never touches key
+# material. (Not re-exported by rialo-s-signer — direct dep required.)
+[dependencies.rialo-s-pubkey]
+version = "0.18.1"
+default-features = false
+optional = true
+
+[dependencies.rialo-s-signer]
+version = "0.18.1"
+optional = true
+
+[dependencies.tokio]
+version = "1"
+features = ["full"]
+optional = true
+
+[dependencies.tower-http]
+version = "0.6"
+features = ["fs"]
+optional = true
+
+[dependencies.uuid]
+version = "1"
+features = ["v4"]
+optional = true
+
+[[bin]]
+name = "rialo_agentpay"
+path = "src/main.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+required-features = ["server"]
+[[example]]
+name = "wallet_registry_backfill"
+required-features = ["implementation"]

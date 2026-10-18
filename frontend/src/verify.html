@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Rialo AgentPay public transaction verifier — check any Rialo Testnet signature by its on-chain facts. No login required.">
+    <title>Verify — Rialo AgentPay</title>
+    <link rel="stylesheet" href="landing.css?v=16">
+    <link rel="stylesheet" href="app.css?v=9">
+    <link rel="stylesheet" href="dashboard.css?v=7">
+    <link rel="stylesheet" href="agents.css?v=1">
+    <link rel="stylesheet" href="verify.css?v=1">
+</head>
+
+<body class="app-body">
+
+<div class="landing-bg" aria-hidden="true"></div>
+
+<!-- ================= SHARED NAV (nav.js; static fallback keeps
+     brand + auth slot before JS renders the full navigation) ================= -->
+
+<nav class="nav" aria-label="Primary">
+    <div class="container nav__inner" data-agentpay-nav>
+        <a class="brand" href="/">
+            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
+        </a>
+        <div class="nav__right">
+            <a class="github-login" href="/auth/github">Login with GitHub <span>↗</span></a>
+        </div>
+    </div>
+</nav>
+
+<main>
+    <section class="app-page container">
+
+        <header class="app-page__head">
+            <p class="eyebrow">Public&nbsp;Verification</p>
+            <h1 class="app-title">Transaction <span class="dim">Verifier.</span></h1>
+            <p class="app-lede">
+                Public, read-only proof of a Rialo Testnet transaction. Paste a
+                signature and the chain answers with exactly one of: a verified
+                on-chain record, <code>no_status</code> (the node has not seen
+                it yet), or a typed error. No login, no wallet, no account — the
+                endpoint
+                <code>GET&nbsp;/api/public/verify</code> reads nothing but the
+                chain.
+            </p>
+
+            <div class="dash-status-bar" aria-label="Verification state">
+                <span class="status status--na" id="verifyState" role="status">
+                    <span class="status__dot" aria-hidden="true"></span>
+                    <span class="status__label">Verify — waiting for signature</span>
+                </span>
+            </div>
+        </header>
+
+        <div class="dash-grid">
+
+            <!-- ================= LOOKUP ================= -->
+            <section class="card dashboard-card dashboard-card--span" aria-labelledby="lookupLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="lookupLabel">Verify a signature</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="badge">Public — no login</span>
+                    </div>
+                </div>
+                <div class="dashboard-card__body">
+                    <form id="verifyForm" class="verify-form" autocomplete="off"
+                          role="form" aria-label="Transaction verifier"
+                          action="/verify.html" method="get">
+                        <div class="verify-form__field">
+                            <label class="field-label" for="sigInput">Transaction&nbsp;signature</label>
+                            <input class="agents-input" id="sigInput" name="signature" type="text"
+                                   placeholder="base58 transaction signature" spellcheck="false"
+                                   maxlength="256" autocomplete="off">
+                        </div>
+                        <div class="verify-form__actions">
+                            <button type="submit" class="wallet-btn wallet-btn--solid" id="verifyBtn">Verify&nbsp;<span>→</span></button>
+                        </div>
+                    </form>
+                    <p class="verify-hint" id="verifyHint" role="status"></p>
+                </div>
+            </section>
+
+            <!-- ================= RESULT ================= -->
+            <section class="card dashboard-card dashboard-card--span" aria-labelledby="resultLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="resultLabel">Chain answer</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="badge">Read-only</span>
+                    </div>
+                </div>
+                <!-- default state; verify.js replaces per outcome -->
+                <div class="dashboard-card__body" id="verifyBody">
+                    <div class="dash-empty" role="status">
+                        <span class="label na">No signature yet</span>
+                        <p>Paste a transaction signature above and submit — the answer below is exactly what the Rialo Testnet node reports, nothing inferred.</p>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+
+        <footer class="app-footer">
+            <div class="footer__meta">
+                <span>Rialo&nbsp;AgentPay</span>
+                <span>Testnet</span>
+                <span>Real&nbsp;data&nbsp;only&nbsp;—&nbsp;or&nbsp;none</span>
+            </div>
+        </footer>
+
+    </section>
+</main>
+
+<script src="nav.js?v=6"></script>
+<script src="auth.js?v=5"></script>
+<script src="verify.js?v=1"></script>
+
+</body>
+</html>

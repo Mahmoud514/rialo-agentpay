@@ -1,0 +1,62 @@
+[Unit]
+Description=Rialo AgentPay Hardened Signer
+Documentation=https://hermes-agent.nousresearch.com/docs
+Requires=network.target
+After=network.target local-fs.target
+
+# Restart behavior: try 5 times in 30 seconds, then stabilize
+StartLimitIntervalSec=30
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=agentpay-signer
+Group=agentpay-signer
+
+# Security hardening (preserved from hardened_launch.sh)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/agentpay-signer
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
+# Environment file (root-controlled, 0600)
+EnvironmentFile=-/etc/agentpay-signer/env
+
+# Load environment variables directly (no shell interpolation)
+Environment="AGENTPAY_SIGNER_ENDPOINT=127.0.0.1:9000"
+Environment="AGENTPAY_SIGNER_STORE=/var/lib/agentpay-signer"
+Environment="AGENTPAY_SIGNER_SIGNING_ENABLED=1"
+
+# The signer binary (must be world-readable)
+ExecStartPre=/usr/bin/sha256sum -c /etc/agentpay-signer/binary.pin
+ExecStart=/opt/agentpay-signer/bin/agentpay-signer
+
+# Stop signals
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Restart on unexpected failure (not on clean exit or unclean init)
+Restart=on-failure
+RestartSec=5
+
+# Health check: fail if /health doesn't respond
+ExecStartPost=/bin/sh -c 'for i in 1 2 3; do curl -sf http://127.0.0.1:9000/health && exit 0 || sleep 1; done; exit 1'
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agentpay-signer
+
+[Install]
+WantedBy=multi-user.target

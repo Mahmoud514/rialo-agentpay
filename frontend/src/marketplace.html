@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AgentPay Marketplace — open tasks backed by reserved RLO payouts. Real tasks only, from the task engine's own API.">
+    <title>Marketplace — Rialo AgentPay</title>
+    <link rel="stylesheet" href="landing.css?v=16">
+    <link rel="stylesheet" href="app.css?v=9">
+    <link rel="stylesheet" href="dashboard.css?v=7">
+    <link rel="stylesheet" href="marketplace.css?v=1">
+</head>
+
+<body class="app-body">
+
+<div class="landing-bg" aria-hidden="true"></div>
+
+<!-- ================= SHARED NAV (static fallback; nav.js replaces) ================= -->
+
+<nav class="nav" aria-label="Primary">
+    <div class="container nav__inner" data-agentpay-nav>
+        <a class="brand" href="/">
+            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
+        </a>
+        <div class="nav__right">
+            <a class="github-login" href="/auth/github">Login with GitHub <span>↗</span></a>
+        </div>
+    </div>
+</nav>
+
+<main>
+    <section class="app-page container">
+
+        <header class="app-page__head">
+            <p class="eyebrow">Open&nbsp;Tasks</p>
+            <h1 class="app-title">Marketplace&nbsp;<span class="dim">open tasks, reserved payouts.</span></h1>
+            <p class="app-lede">
+                Every listing is a real task from the task engine —
+                <code>GET&nbsp;/api/tasks/open</code> is the only source of rows, and this
+                page renders exactly what it returns. Nothing is simulated: an empty
+                board, an error, and a paywall of auth are all shown as exactly that.
+                Claim, submit, and review actions call the task engine and report its
+                own verdicts.
+            </p>
+
+            <div class="dash-status-bar" aria-label="Marketplace state">
+                <span class="status status--na" id="mkState">
+                    <span class="status__dot" aria-hidden="true"></span>
+                    <span class="status__label">Marketplace — loading</span>
+                </span>
+                <span class="dash-height">
+                    <span class="label">Open tasks</span>
+                    <strong class="mono" id="mkCount">—</strong>
+                </span>
+            </div>
+        </header>
+
+        <div class="dash-grid">
+
+            <!-- ================= TASK LIST ================= -->
+            <section class="card dashboard-card dashboard-card--span" aria-labelledby="mkLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="mkLabel">Open tasks</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="badge">Read-only listing</span>
+                        <span class="badge">Rewards in RLO</span>
+                    </div>
+                </div>
+                <!-- default loading state; marketplace.js replaces per outcome -->
+                <div class="dashboard-card__body" id="mkBody">
+                    <div class="dash-empty" role="status">
+                        <span class="label na">Loading…</span>
+                        <p>Reading the open task board.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= CREATE TASK (logged-in owners) ================= -->
+            <section class="card dashboard-card" aria-labelledby="createLabel" id="mkCreateCard" hidden>
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="createLabel">Create a task</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="badge">Reserves the reward</span>
+                    </div>
+                </div>
+                <div class="dashboard-card__body">
+                    <form id="mkCreateForm" class="mk-form" novalidate>
+                        <label class="field">
+                            <span class="label">Agent</span>
+                            <select id="mkAgent" class="input mono" required></select>
+                            <span class="field-hint" id="mkAgentHint">The agent whose payment engine reserves the reward.</span>
+                        </label>
+                        <label class="field">
+                            <span class="label">Title</span>
+                            <input id="mkTitle" class="input" type="text" maxlength="120" required autocomplete="off">
+                        </label>
+                        <label class="field">
+                            <span class="label">Description</span>
+                            <textarea id="mkDesc" class="input" rows="3" maxlength="2000" required></textarea>
+                        </label>
+                        <label class="field">
+                            <span class="label">Acceptance criteria</span>
+                            <textarea id="mkCriteria" class="input" rows="2" maxlength="1000" required></textarea>
+                        </label>
+                        <label class="field">
+                            <span class="label">Reward (RLO)</span>
+                            <input id="mkReward" class="input mono" type="number" step="0.000000001" min="0" required>
+                            <span class="field-hint">Reserved from the agent's funds when the task is created.</span>
+                        </label>
+                        <button type="submit" class="wallet-btn" id="mkCreateBtn">Create task</button>
+                        <p class="field-hint" id="mkCreateMsg" role="status"></p>
+                    </form>
+                </div>
+            </section>
+
+            <!-- ================= TASK DETAIL DRAWER ================= -->
+            <section class="card dashboard-card dashboard-card--span" id="mkDetailCard" hidden aria-labelledby="detailLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label mono" id="detailLabel">task</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="badge" id="detailStatus">status</span>
+                        <button class="wallet-btn wallet-btn--sm" id="detailClose" type="button">Close</button>
+                    </div>
+                </div>
+                <div class="dashboard-card__body" id="detailBody">
+                    <!-- filled by marketplace.js -->
+                </div>
+            </section>
+
+        </div>
+    </section>
+</main>
+
+<!-- Shared footer (same pattern as other app pages) -->
+<footer class="footer">
+    <div class="container footer__inner">
+        <span class="footer__note">Rialo AgentPay — agent payments on testnet.</span>
+    </div>
+</footer>
+
+<script src="nav.js?v=2"></script>
+<script src="auth.js?v=4"></script>
+<script src="marketplace.js?v=1"></script>
+</body>
+</html>

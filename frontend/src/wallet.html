@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AgentPay wallet — manage your Rialo wallet, check your balance, and send RLO.">
+    <title>Wallet — Rialo AgentPay</title>
+    <link rel="stylesheet" href="landing.css?v=16">
+    <link rel="stylesheet" href="app.css?v=9">
+</head>
+
+<body class="app-body">
+
+<div class="landing-bg" aria-hidden="true"></div>
+
+<!-- ================= SHARED NAV (nav.js; static fallback keeps
+     brand + auth slot before JS renders the full navigation) ================= -->
+
+<nav class="nav" aria-label="Primary">
+    <div class="container nav__inner" data-agentpay-nav>
+        <a class="brand" href="/">
+            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
+        </a>
+        <div class="nav__right">
+            <a class="github-login" href="/auth/github">Login with GitHub <span>↗</span></a>
+        </div>
+    </div>
+</nav>
+
+<main>
+    <section class="app-page container">
+
+        <header class="app-page__head">
+            <p class="eyebrow">Rialo&nbsp;Wallet</p>
+            <h1 class="app-title">Your&nbsp;<span class="dim">Wallet.</span></h1>
+            <p class="app-lede">
+                Manage your Rialo wallet, check your balance, and send RLO.
+                Every value on this page comes from the AgentPay backend and the
+                Rialo RPC — unavailable data shows an explicit empty state.
+            </p>
+        </header>
+
+        <div class="app-stack">
+
+            <!-- ================= WALLET OVERVIEW ================= -->
+            <div class="card wallet-card">
+
+                <div class="panel-head">
+                    <span class="label">Wallet&nbsp;Overview</span>
+                    <div class="panel-head__meta">
+                        <span class="badge badge--cyan">Rialo&nbsp;Testnet</span>
+                        <span class="status status--na" id="walletStateIndicator">
+                            <span class="status__dot" aria-hidden="true"></span>
+                            <span class="status__label">Loading</span>
+                        </span>
+                    </div>
+                </div>
+
+                <div class="wallet-grid">
+
+                    <div class="wallet-info balance-cell">
+                        <small class="field-label">Balance</small>
+                        <strong class="wallet-balance" id="walletBalance">—</strong>
+                        <span class="field-hint">Live&nbsp;from&nbsp;Rialo&nbsp;RPC&nbsp;·&nbsp;never&nbsp;simulated</span>
+                    </div>
+
+                    <div class="wallet-info wallet-address-cell">
+                        <small class="field-label">Wallet&nbsp;Address</small>
+                        <div class="wallet-address-row">
+                            <strong id="walletAddress">Loading...</strong>
+                            <button type="button" class="wallet-btn copy-btn" id="copyWallet">Copy</button>
+                        </div>
+                        <span class="field-hint">Identity-bound&nbsp;keypair&nbsp;·&nbsp;held&nbsp;server-side</span>
+                    </div>
+
+                    <div class="faucet-cell">
+                        <small class="field-label">Testnet&nbsp;Faucet</small>
+                        <button type="button" class="wallet-btn wallet-btn--solid faucet-btn" id="faucetBtn">
+                            Get&nbsp;1&nbsp;RLO
+                            <span>→</span>
+                        </button>
+                        <span class="field-hint">1&nbsp;RLO&nbsp;per&nbsp;request&nbsp;·&nbsp;POST&nbsp;/api/faucet</span>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ================= SEND RLO (shown when a wallet exists) ================= -->
+            <div class="card payment-card" id="paymentCard" hidden>
+
+                <div class="panel-head">
+                    <span class="label">Direct&nbsp;Payment</span>
+                    <div class="panel-head__meta">
+                        <span class="badge badge--cyan">Rialo&nbsp;Transfer</span>
+                        <span class="field-hint">Settles&nbsp;on-chain&nbsp;·&nbsp;returns&nbsp;a&nbsp;real&nbsp;signature</span>
+                    </div>
+                </div>
+
+                <form class="payment-form" id="paymentForm" novalidate>
+
+                    <label class="payment-field">
+                        <small class="field-label">Recipient&nbsp;Address</small>
+                        <input
+                            type="text"
+                            id="paymentRecipient"
+                            placeholder="Rialo address (32-44 chars)"
+                            autocomplete="off"
+                            spellcheck="false"
+                        >
+                    </label>
+
+                    <label class="payment-field">
+                        <small class="field-label">Amount&nbsp;(RLO)</small>
+                        <input
+                            type="number"
+                            id="paymentAmount"
+                            placeholder="0.0"
+                            step="0.000000001"
+                            min="0.000000001"
+                        >
+                    </label>
+
+                    <div class="send-btn-cell">
+                        <button
+                            type="submit"
+                            class="wallet-btn wallet-btn--solid send-btn"
+                            id="sendPaymentBtn"
+                        >
+                            Send&nbsp;Payment
+                            <span>→</span>
+                        </button>
+                    </div>
+
+                    <p class="payment-status" id="paymentStatus" role="status" aria-live="polite"></p>
+
+                    <div class="payment-result" id="paymentResult" hidden>
+                        <div class="payment-result__head">
+                            <small>Transaction&nbsp;Signature</small>
+                            <span class="badge badge--lime">On-chain&nbsp;Proof</span>
+                        </div>
+                        <strong id="paymentSignature"></strong>
+                    </div>
+
+                </form>
+            </div>
+
+            <!-- logged-out honest state for the payment lane -->
+            <div class="card" id="paymentGate">
+                <div class="panel-head">
+                    <span class="label">Direct&nbsp;Payment</span>
+                    <span class="status status--na">
+                        <span class="status__dot" aria-hidden="true"></span>
+                        <span class="status__label">Not&nbsp;available</span>
+                    </span>
+                </div>
+                <div class="gated-note">
+                    <span class="badge">Auth&nbsp;required</span>
+                    <span>Sign in with GitHub to provision your wallet and send payments.</span>
+                    <a class="wallet-btn wallet-btn--solid gated-login-btn" href="/auth/github">
+                        Login&nbsp;with&nbsp;GitHub
+                        <span>↗</span>
+                    </a>
+                </div>
+            </div>
+
+        </div>
+
+        <footer class="app-footer">
+            <div class="footer__meta">
+                <span>Rialo&nbsp;AgentPay</span>
+                <span>Testnet</span>
+                <span>Real&nbsp;data&nbsp;only&nbsp;—&nbsp;or&nbsp;none</span>
+            </div>
+        </footer>
+
+    </section>
+</main>
+
+<script src="nav.js?v=6"></script>
+<script src="auth.js?v=5"></script>
+<script src="wallet.js?v=10"></script>
+
+</body>
+</html>

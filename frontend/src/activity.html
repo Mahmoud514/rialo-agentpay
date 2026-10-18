@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AgentPay activity — per-agent payment history from the AgentPay API. Real data only.">
+    <title>Activity — Rialo AgentPay</title>
+    <link rel="stylesheet" href="landing.css?v=16">
+    <link rel="stylesheet" href="app.css?v=9">
+    <link rel="stylesheet" href="dashboard.css?v=7">
+    <link rel="stylesheet" href="agents.css?v=1">
+    <link rel="stylesheet" href="activity.css?v=3">
+</head>
+
+<body class="app-body">
+
+<div class="landing-bg" aria-hidden="true"></div>
+
+<!-- ================= SHARED NAV (nav.js; static fallback keeps
+     brand + auth slot before JS renders the full navigation) ================= -->
+
+<nav class="nav" aria-label="Primary">
+    <div class="container nav__inner" data-agentpay-nav>
+        <a class="brand" href="/">
+            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
+        </a>
+        <div class="nav__right">
+            <a class="github-login" href="/auth/github">Login with GitHub <span>↗</span></a>
+        </div>
+    </div>
+</nav>
+
+<main>
+    <section class="app-page container">
+
+        <header class="app-page__head">
+            <p class="eyebrow">Payment&nbsp;History</p>
+            <h1 class="app-title">Agent&nbsp;<span class="dim">Activity.</span></h1>
+            <p class="app-lede">
+                Payment history for your agents — every intent from the AgentPay
+                replay ledger, in the server's deterministic order. This page is
+                owner-scoped: only the agent you open can be seen, through
+                <code>GET&nbsp;/api/agents/{id}/activity</code>. No data is simulated
+                — an empty or unavailable feed is shown as exactly that.
+                <a class="dash-inline-link" href="/agents.html">Back to Agents</a>
+            </p>
+
+            <div class="dash-status-bar" aria-label="Activity state">
+                <span class="status status--na" id="activityState">
+                    <span class="status__dot" aria-hidden="true"></span>
+                    <span class="status__label">Activity — loading</span>
+                </span>
+                <span class="dash-height">
+                    <span class="label">Agent</span>
+                    <strong class="mono" id="agentChip">—</strong>
+                </span>
+            </div>
+        </header>
+
+        <div class="dash-grid">
+
+            <!-- ================= AGENT CONTEXT ================= -->
+            <section class="card dashboard-card dashboard-card--span" aria-labelledby="ctxLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="ctxLabel">Agent</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="badge">Owner-scoped</span>
+                        <a class="wallet-btn wallet-btn--sm" href="/agents.html">Agents&nbsp;→</a>
+                    </div>
+                </div>
+                <!-- logged-out / no-agent fallback; activity.js replaces
+                     this with the selected agent's identity block -->
+                <div class="dashboard-card__body" id="ctxBody">
+                    <div class="gated-note">
+                        <span class="badge">Agent&nbsp;required</span>
+                        <span>Open an agent from the Agents page to view its activity history.</span>
+                        <a class="wallet-btn wallet-btn--solid" href="/agents.html">
+                            Open&nbsp;Agents
+                            <span>→</span>
+                        </a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= FILTERS ================= -->
+            <section class="card dashboard-card dashboard-card--span" aria-labelledby="filterLabel" id="filterCard" hidden>
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="filterLabel">Filters</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="field-hint">optional — leave blank to include all</span>
+                    </div>
+                </div>
+                <div class="dashboard-card__body">
+                    <form id="filterForm" class="activity-filters" autocomplete="off" role="form" aria-label="Activity filters">
+                        <div class="activity-filters__row">
+                            <div class="activity-field">
+                                <label class="field-label" for="fState">State</label>
+                                <select class="agents-input agents-select" id="fState" name="state">
+                                    <option value="">any</option>
+                                    <option value="pending">pending</option>
+                                    <option value="confirmed">confirmed</option>
+                                    <option value="failed">failed</option>
+                                    <option value="unknown">unknown</option>
+                                    <option value="reconciled_paid">reconciled&nbsp;paid</option>
+                                    <option value="reconciled_absent">reconciled&nbsp;absent</option>
+                                </select>
+                            </div>
+                            <div class="activity-field">
+                                <label class="field-label" for="fPrincipal">Principal</label>
+                                <select class="agents-input agents-select" id="fPrincipal" name="principal">
+                                    <option value="">any</option>
+                                    <option value="owner">owner</option>
+                                    <option value="agent">agent</option>
+                                </select>
+                            </div>
+                            <div class="activity-field">
+                                <label class="field-label" for="fRecipient">Recipient</label>
+                                <input class="agents-input" id="fRecipient" name="recipient" type="text"
+                                       placeholder="32–44 alphanumeric" maxlength="44">
+                            </div>
+                        </div>
+
+                        <div class="activity-filters__row">
+                            <div class="activity-field">
+                                <label class="field-label" for="fAmount">Amount&nbsp;(RLO)</label>
+                                <input class="agents-input" id="fAmount" name="amount" type="text"
+                                       inputmode="decimal" placeholder="e.g. 1.5">
+                            </div>
+                            <div class="activity-field">
+                                <label class="field-label" for="fFrom">From&nbsp;(UTC)</label>
+                                <input class="agents-input" id="fFrom" name="from" type="datetime-local">
+                            </div>
+                            <div class="activity-field">
+                                <label class="field-label" for="fTo">To&nbsp;(UTC)</label>
+                                <input class="agents-input" id="fTo" name="to" type="datetime-local">
+                            </div>
+                        </div>
+
+                        <div class="activity-filters__actions">
+                            <button type="submit" class="wallet-btn wallet-btn--solid">Apply</button>
+                            <button type="button" class="wallet-btn" id="resetFilters">Reset</button>
+                        </div>
+                        <p class="agents-msg" id="filterMsg" role="status"></p>
+                    </form>
+                </div>
+            </section>
+
+            <!-- ================= ACTIVITY FEED ================= -->
+            <section class="card dashboard-card dashboard-card--span" aria-labelledby="feedLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="feedLabel">Activity</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="status status--na" id="feedCount">
+                            <span class="status__label">Loading</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="dashboard-card__body" id="feedBody">
+                    <!-- default loading state; activity.js replaces per outcome -->
+                    <div class="dash-empty" role="status">
+                        <span class="label na">Loading…</span>
+                        <p>Reading the replay ledger.</p>
+                    </div>
+                </div>
+                <div class="activity-loadmore" id="loadMore" hidden>
+                    <button type="button" class="wallet-btn" id="loadMoreBtn">Load&nbsp;more</button>
+                    <span class="field-hint" id="loadMoreHint"></span>
+                </div>
+            </section>
+
+        </div>
+
+        <footer class="app-footer">
+            <div class="footer__meta">
+                <span>Rialo&nbsp;AgentPay</span>
+                <span>Testnet</span>
+                <span>Real&nbsp;data&nbsp;only&nbsp;—&nbsp;or&nbsp;none</span>
+            </div>
+        </footer>
+
+    </section>
+</main>
+
+<script src="nav.js?v=6"></script>
+<script src="auth.js?v=5"></script>
+<script src="activity.js?v=2"></script>
+
+</body>
+</html>

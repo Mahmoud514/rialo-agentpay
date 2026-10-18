@@ -1,0 +1,385 @@
+/* ==========================================================================
+   RIALO AGENTPAY — DASHBOARD (dashboard.html)
+   Extends landing.css + app.css; uses their design tokens and card anatomy
+   only — no second system. Loaded third: landing.css (tokens/nav/.card) →
+   app.css (app page/panel-head/field rows) → dashboard.css (one unified
+   dashboard card language + the control-center grid).
+   Every value rendered here comes from /api/me, /api/health or
+   /api/program/status. Unavailable data keeps the explicit empty states.
+   ========================================================================== */
+
+/* ------------------------------
+   LIVE STATUS BAR (page head)
+   ------------------------------ */
+
+.dash-status-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s-5);
+    margin-top: var(--s-6);
+    padding: var(--s-4) var(--s-5);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), var(--glow-lime-soft);
+}
+
+.dash-height {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--s-3);
+    margin-left: auto;
+}
+
+.dash-height .mono {
+    font-size: 12.5px;
+    color: var(--lime);
+    letter-spacing: 0.02em;
+}
+
+.dash-inline-link {
+    color: var(--lime);
+    text-decoration: none;
+    border-bottom: 1px solid var(--line-lime);
+    white-space: nowrap;
+}
+.dash-inline-link:hover { border-bottom-color: var(--lime); }
+
+/* ------------------------------
+   CONTROL-CENTER GRID
+   The grid lives inside .container (1600px + gutter) — no second width
+   system. Row composition is deliberate: full-width anchor (Account),
+   balanced pair (Network | Program), full-width Phase 5 lane (Agents).
+   No orphaned half-rows.
+   ------------------------------ */
+
+.dash-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-5);
+    align-items: stretch;
+}
+
+/* ------------------------------
+   UNIFIED DASHBOARD CARD
+   Same overlay anatomy as the approved .wallet-card/.payment-card pattern:
+   landing .card owns structure (background, radius, padding, 1px border
+   width/style, transitions); the lane only re-colours the edge illumination
+   to lime. Header rhythm comes from app.css .panel-head. One card system
+   for Account / Network / Program / Agents.
+   ------------------------------ */
+
+.dashboard-card {
+    display: flex;
+    flex-direction: column;
+    border-color: rgba(var(--lime-rgb), 0.18);
+    box-shadow:
+        inset 0 1px 0 rgba(var(--lime-rgb), 0.05),
+        var(--glow-lime-soft);
+}
+
+.dashboard-card:hover {
+    border-color: rgba(var(--lime-rgb), 0.3);
+}
+
+/* header divider: same 1px rule as .panel-head, lime tone (colour-only) */
+.dashboard-card .panel-head {
+    border-bottom-color: rgba(var(--lime-rgb), 0.12);
+    margin-bottom: var(--s-5);
+    flex-shrink: 0;
+}
+
+.dashboard-card__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+    min-width: 0;
+    flex: 1;
+}
+
+/* cards fill their grid cell so a shorter lane never leaves a hole under it;
+   the trailing source-hint pins to the bottom, keeping footers aligned.
+   In a stretched row the surplus is taken by the growing hero metric (see
+   .dash-metric), so the paired cards keep ONE shared 24px section rhythm —
+   gap above a panel/hint never stacks on top of the flex gap. */
+.dashboard-card__body > .field-hint:last-child {
+    margin-top: auto;
+}
+
+/* equal chip rhythm in card headers: badge and status occupy the same
+   height (26px — the badge's natural line box) so Network (badge + status)
+   and Program (status) headers sit at the same pixel height and both
+   bodies start flush */
+.dashboard-card__meta .badge,
+.dashboard-card__meta .status {
+    min-height: 26px;
+}
+
+/* full-width lanes (Account anchor, Agents) */
+.dashboard-card--span {
+    grid-column: 1 / -1;
+}
+
+/* ------------------------------
+   KEY/VALUE READ-OUTS (shared by Network + Program)
+   ------------------------------ */
+
+/* landing.css styles its .kv as a bordered endpoint TABLE; the dashboard
+   metadata blocks reuse the class for its row anatomy only — the inherited
+   1px frame is dropped so no inner border sits inside the card. Outer card
+   border, Safety Cap border, and dashed empty states are untouched. */
+.dashboard-card__grid.kv { border: none; }
+
+.kv {
+    display: grid;
+    grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+    gap: var(--s-3) var(--s-5);
+    align-items: baseline;
+    margin: 0;
+}
+
+.kv dt {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+/* one shared row rhythm: every metadata row in Network and Program
+   occupies the same height on both cards */
+.kv dt,
+.kv dd {
+    line-height: 1.5;
+}
+
+.kv dd {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--text);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.kv dd.ok      { color: var(--lime); }
+.kv dd.warn    { color: var(--amber); }
+.kv dd.bad     { color: var(--red); }
+.kv dd.neutral { color: var(--text-2); }
+
+/* long hex ids stay readable without forcing page overflow */
+.dash-id {
+    letter-spacing: -0.01em;
+    word-break: break-all;
+}
+
+/* endpoint readable but subordinate */
+#netRpcUrl { color: var(--text-2); word-break: break-all; }
+
+/* ------------------------------
+   NETWORK — block height as the primary live metric, same figure
+   treatment as the approved wallet balance display (colour only).
+   ------------------------------ */
+
+.dash-metric {
+    display: flex;
+    flex-direction: column;
+    /* the growing block of the Network lane: when its row is stretched by
+       the taller Program card, the surplus lands BELOW the metric cluster
+       as one intentional section gap — never stacked on top of the 24px
+       rhythm between the status panel and its source hint. */
+    flex: 1 1 auto;
+}
+
+.dash-metric__value {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: clamp(26px, 3.2vw, 34px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    color: var(--lime);
+    text-shadow: 0 0 24px rgba(var(--lime-rgb), 0.28);
+    font-variant-numeric: tabular-nums;
+}
+
+.dash-metric__value.is-na {
+    color: var(--text-3);
+    text-shadow: none;
+    font-size: clamp(20px, 2.4vw, 24px);
+}
+
+/* ------------------------------
+   PROGRAM — dedicated safety block
+   ------------------------------ */
+
+/* PROGRAM — safety block. Same 1px-bordered inset-panel anatomy as the
+   shared metadata panels (same radius, token padding, soft single glow),
+   only the amber tone carries the warning meaning. */
+.dash-safety {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-3) var(--s-4);
+    border: 1px solid rgba(251, 191, 36, 0.28);
+    border-radius: var(--radius);
+    background: rgba(251, 191, 36, 0.03);
+    box-shadow: 0 0 18px -14px rgba(251, 191, 36, 0.25);
+}
+
+.dash-safety .label { color: var(--amber); }
+
+.dash-safety strong {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--amber);
+}
+
+/* ------------------------------
+   SHARED BLOCKS
+   ------------------------------ */
+
+.dash-copy {
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--text-2);
+    max-width: 58ch;
+    margin: 0;
+}
+
+/* ------------------------------
+   HONEST EMPTY STATES
+   Dashed inner blocks only — the OUTER card stays on the unified system,
+   so a deferred lane reads as "future", inside the same product frame.
+   ------------------------------ */
+
+.dash-empty {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-4) var(--s-5);
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.dash-empty p {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    line-height: 1.7;
+    color: var(--text-3);
+}
+
+/* Agents card entry point (Phase 5 Step 9 — links to /agents.html; the
+   dashboard itself renders no agent data) */
+.agents-entry {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s-4);
+    margin-top: var(--s-4);
+}
+
+.agents-entry .field-hint { margin-top: 0; }
+
+/* Hide the ENDPOINT row in the NETWORK card */
+.dash-endpoint-row,
+#netRpcUrl {
+    display: none;
+}
+
+/* Hide endpoint path hints from the visible UI */
+.dash-endpoint-hint {
+    display: none;
+}
+
+/* dashboard-card--phase: reserved honest-unavailable lane (dashed header,
+   muted copy). No card currently uses it — the Agents lane became live in
+   Phase 5 Step 9; the style stays for future not-built-yet sections. */
+.dashboard-card--phase .panel-head { border-bottom-style: dashed; }
+.dashboard-card--phase .dash-copy  { color: var(--text-3); }
+
+/* ------------------------------
+   ACCOUNT CARD (rendered content)
+   ------------------------------ */
+
+.dash-user {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.dash-user .github-avatar {
+    width: 44px;
+    height: 44px;
+}
+
+.dash-user-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.dash-user-info strong {
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--text);
+}
+
+.dash-user-info span {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+}
+
+.dash-user .connected-badge { margin-left: auto; }
+
+.dash-wallet-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.dash-wallet-row .dash-wallet-address {
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    color: var(--text);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+/* ------------------------------
+   RESPONSIVE — approved app breakpoints only; no new ones.
+   ------------------------------ */
+
+@media (max-width: 760px) {
+    .dash-grid { grid-template-columns: minmax(0, 1fr); }
+    .dash-height { margin-left: 0; }
+    .dash-user .connected-badge { margin-left: 0; }
+}
+
+@media (max-width: 560px) {
+    .dash-metric__value { font-size: clamp(24px, 7vw, 30px); }
+    .dashboard-card__body .wallet-btn { width: 100%; }
+}
+
+@media (max-width: 420px) {
+    .dash-status-bar { flex-direction: column; align-items: flex-start; }
+    .kv { grid-template-columns: minmax(0, 1fr); gap: var(--s-1); }
+    .kv dt { margin-top: var(--s-3); }
+    .dash-metric__value.is-na { font-size: 18px; }
+}

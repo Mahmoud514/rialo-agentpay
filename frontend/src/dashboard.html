@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AgentPay dashboard — live account, network, and program status. Real data only.">
+    <title>Dashboard — Rialo AgentPay</title>
+    <link rel="stylesheet" href="landing.css?v=16">
+    <link rel="stylesheet" href="app.css?v=9">
+    <link rel="stylesheet" href="dashboard.css?v=7">
+</head>
+
+<body class="app-body">
+
+<div class="landing-bg" aria-hidden="true"></div>
+
+<!-- ================= SHARED NAV (nav.js; static fallback keeps
+     brand + auth slot before JS renders the full navigation) ================= -->
+
+<nav class="nav" aria-label="Primary">
+    <div class="container nav__inner" data-agentpay-nav>
+        <a class="brand" href="/">
+            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
+        </a>
+        <div class="nav__right">
+            <a class="github-login" href="/auth/github">Login with GitHub <span>↗</span></a>
+        </div>
+    </div>
+</nav>
+
+<main>
+    <section class="app-page container">
+
+        <header class="app-page__head">
+            <p class="eyebrow">Control&nbsp;Center</p>
+            <h1 class="app-title">System&nbsp;<span class="dim">Status.</span></h1>
+            <p class="app-lede">
+                Live AgentPay account, network, and program state.
+                Every value on this page is read from the AgentPay backend and
+                the Rialo RPC — unavailable data shows an explicit empty state,
+                never a simulated number. Wallet balance, faucet, and direct
+                payments live on the&nbsp;<a class="dash-inline-link" href="/wallet.html">Wallet&nbsp;page</a>.
+            </p>
+
+            <div class="dash-status-bar" aria-label="Live system status">
+                <span class="status status--na" id="statusAgentpay">
+                    <span class="status__dot" aria-hidden="true"></span>
+                    <span class="status__label">AgentPay — loading</span>
+                </span>
+                <span class="status status--na" id="statusRpc">
+                    <span class="status__dot" aria-hidden="true"></span>
+                    <span class="status__label">Rialo&nbsp;RPC — loading</span>
+                </span>
+                <span class="dash-height">
+                    <span class="label">Block</span>
+                    <strong class="mono" id="blockHeight">—</strong>
+                </span>
+            </div>
+        </header>
+
+        <div class="dash-grid">
+
+            <!-- ================= ACCOUNT — full-width anchor ================ -->
+            <section class="card dashboard-card dashboard-card--span" aria-labelledby="accountLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="accountLabel">Account</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="status status--na" id="accountState">
+                            <span class="status__dot" aria-hidden="true"></span>
+                            <span class="status__label">Loading</span>
+                        </span>
+                    </div>
+                </div>
+                <!-- static logged-out fallback; dashboard.js replaces this
+                     with real session data from GET /api/me -->
+                <div class="dashboard-card__body" id="accountBody">
+                    <div class="gated-note">
+                        <span class="badge">Auth&nbsp;required</span>
+                        <span>Sign in with GitHub to view your account and wallet.</span>
+                        <a class="wallet-btn wallet-btn--solid" href="/auth/github">
+                            Login&nbsp;with&nbsp;GitHub
+                            <span>↗</span>
+                        </a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= NETWORK ================= -->
+            <section class="card dashboard-card" aria-labelledby="networkLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="networkLabel">Network</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="badge badge--cyan">Testnet</span>
+                        <span class="status status--na" id="netPrimaryState">
+                            <span class="status__dot" aria-hidden="true"></span>
+                            <span class="status__label">Checking</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="dashboard-card__body">
+
+                    <div class="dash-metric">
+                        <small class="field-label">Block&nbsp;height</small>
+                        <strong class="dash-metric__value" id="netHeight">—</strong>
+                        <span class="field-hint">Live&nbsp;from&nbsp;the&nbsp;Testnet&nbsp;node&nbsp;·&nbsp;read-only&nbsp;probe</span>
+                    </div>
+
+                    <dl class="kv dashboard-card__grid">
+                        <dt>AgentPay</dt>
+                        <dd id="netAgentpay" class="na">—</dd>
+                        <dt>Rialo&nbsp;RPC</dt>
+                        <dd id="netRpc" class="na">—</dd>
+                        <dt class="dash-endpoint-row">Endpoint</dt>
+                        <dd id="netRpcUrl" class="na dash-endpoint-row">—</dd>
+                    </dl>
+
+                    <span class="field-hint dash-endpoint-hint">GET&nbsp;/api/health</span>
+
+                </div>
+            </section>
+
+            <!-- ================= PROGRAM ================= -->
+            <section class="card dashboard-card" aria-labelledby="programLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="programLabel">AgentPay&nbsp;Program</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="status status--na" id="programState">
+                            <span class="status__dot" aria-hidden="true"></span>
+                            <span class="status__label">Loading</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="dashboard-card__body">
+
+                    <dl class="kv dashboard-card__grid">
+                        <dt>Program&nbsp;ID</dt>
+                        <dd id="progId" class="na">—</dd>
+                        <dt>On-chain</dt>
+                        <dd id="progOnchain" class="na">—</dd>
+                        <dt>Manifest</dt>
+                        <dd id="progManifest" class="na">—</dd>
+                        <dt>Deployed&nbsp;bug</dt>
+                        <dd id="progBug" class="na">—</dd>
+                        <dt>Payment&nbsp;route</dt>
+                        <dd id="progRoute" class="na">—</dd>
+                    </dl>
+
+                    <div class="dash-safety">
+                        <span class="label">Safety&nbsp;cap</span>
+                        <strong id="progPath">—</strong>
+                        <span class="field-hint">The program path stays safety-capped until an operator enables it — not a usable payment lane today.</span>
+                    </div>
+
+                    <span class="field-hint dash-endpoint-hint">GET&nbsp;/api/program/status</span>
+
+                </div>
+            </section>
+
+            <!-- ================= AGENTS — full-width, Phase 5 ================ -->
+            <section class="card dashboard-card dashboard-card--span" aria-labelledby="agentsLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="agentsLabel">Agents</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="badge">Owner-scoped</span>
+                        <span class="status status--on">
+                            <span class="status__dot" aria-hidden="true"></span>
+                            <span class="status__label">Available</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="dashboard-card__body">
+                    <p class="dash-copy">
+                        The agent registry is live: create agents with their own
+                        independent wallets, manage their lifecycle status, read
+                        live balances, and configure payment policies. Every
+                        value on that page comes from the AgentPay API — no
+                        simulated data. Payments are not executed from the
+                        dashboard.
+                    </p>
+                    <div class="agents-entry">
+                        <a class="wallet-btn wallet-btn--solid" href="/agents.html">
+                            Open&nbsp;Agents&nbsp;
+                            <span>→</span>
+                        </a>
+                        <span class="field-hint dash-endpoint-hint">GET /api/agents — owner-scoped, server-filtered</span>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+
+        <footer class="app-footer">
+            <div class="footer__meta">
+                <span>Rialo&nbsp;AgentPay</span>
+                <span>Testnet</span>
+                <span>Real&nbsp;data&nbsp;only&nbsp;—&nbsp;or&nbsp;none</span>
+            </div>
+        </footer>
+
+    </section>
+</main>
+
+<script src="nav.js?v=6"></script>
+<script src="auth.js?v=5"></script>
+<script src="dashboard.js?v=4"></script>
+
+</body>
+</html>

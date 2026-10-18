@@ -1,0 +1,224 @@
+/* ==========================================================================
+   RIALO AGENTPAY — AGENTS PAGE (agents.html)
+   Extends landing.css + app.css + dashboard.css; tokens and card anatomy
+   are reused, never redefined. Loaded fourth and last. Everything rendered
+   here comes from the /api/agents* endpoints — no second design system.
+   ========================================================================== */
+
+/* stacked registry cards inside the list panel body */
+#agentList {
+    display: grid;
+    gap: var(--s-5);
+}
+
+/* ------------------------------
+   AGENT CARD (reuses .dashboard-card anatomy)
+   ------------------------------ */
+
+.agents-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    padding: var(--s-5);
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), var(--glow-lime-soft);
+}
+
+.agents-card .panel-head {
+    padding-bottom: var(--s-3);
+    border-bottom: 1px dashed var(--line);
+}
+
+.agents-name {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.agents-addr {
+    letter-spacing: -0.01em;
+    word-break: break-all;
+}
+
+.agents-list {
+    display: inline-block;
+    max-width: 100%;
+    word-break: break-all;
+    line-height: 1.7;
+}
+
+/* ------------------------------
+   ACTION ROW + POLICY PANEL
+   ------------------------------ */
+
+.agents-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+}
+
+.agents-policy {
+    padding: var(--s-4) var(--s-5);
+    min-width: 0;
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.agents-policy .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    margin-bottom: var(--s-4);
+}
+
+.agents-policy-edit {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-3) var(--s-5);
+    align-items: end;
+    margin-top: var(--s-4);
+}
+
+.agents-policy-edit .field-label {
+    grid-column: 1 / -1;
+    margin-bottom: var(--s-2);
+}
+
+.agents-policy-edit .agents-input,
+.agents-policy-edit .agents-textarea {
+    width: 100%;
+}
+
+.agents-check {
+    grid-column: 1 / -1;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-3);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--text-2);
+    cursor: pointer;
+}
+
+.agents-check input[type="checkbox"] {
+    accent-color: var(--lime);
+    width: 14px;
+    height: 14px;
+}
+
+/* ------------------------------
+   FORM CONTROLS (page-local names; visual language = wallet inputs)
+   ------------------------------ */
+
+.agents-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    min-width: 0;
+}
+
+.agents-input,
+.agents-textarea {
+    width: 100%;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    letter-spacing: 0.02em;
+    color: var(--text);
+    padding: 11px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+    transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.agents-input:focus,
+.agents-textarea:focus {
+    outline: none;
+    border-color: var(--line-lime);
+    box-shadow: var(--glow-lime-soft);
+}
+
+.agents-input::placeholder,
+.agents-textarea::placeholder {
+    color: var(--text-3);
+    letter-spacing: 0.04em;
+}
+
+.agents-textarea {
+    resize: vertical;
+    line-height: 1.7;
+}
+
+/* inline rename (replaces the card heading in place) */
+.agents-rename-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    width: 100%;
+    min-width: 0;
+}
+
+.agents-rename-row .agents-input {
+    flex: 1 1 200px;
+}
+
+/* ------------------------------
+   MESSAGES
+   ------------------------------ */
+
+.agents-msg {
+    margin: 0;
+    min-height: 14px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    line-height: 1.6;
+    color: var(--text-3);
+    overflow-wrap: anywhere;
+}
+
+.agents-msg.ok  { color: var(--lime); }
+.agents-msg.bad { color: var(--red); }
+
+/* destructive lifecycle action: red edge instead of lime */
+.agents-btn-danger,
+.wallet-btn--danger {
+    border-color: rgba(248, 113, 113, 0.4);
+    background: rgba(248, 113, 113, 0.07);
+    color: var(--red);
+}
+
+.agents-btn-danger:hover:not(:disabled),
+.wallet-btn--danger:hover:not(:disabled) {
+    background: rgba(248, 113, 113, 0.14);
+    border-color: rgba(248, 113, 113, 0.65);
+    box-shadow: 0 0 20px -8px rgba(248, 113, 113, 0.4);
+}
+
+/* ------------------------------
+   RESPONSIVE — approved app breakpoints only; no new ones.
+   ------------------------------ */
+
+@media (max-width: 760px) {
+    .agents-policy-edit { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 560px) {
+    .agents-card { padding: var(--s-4); }
+    .agents-policy { padding: var(--s-3) var(--s-4); }
+}

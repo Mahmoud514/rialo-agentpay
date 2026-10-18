@@ -1,0 +1,8 @@
+package rialo:rialo-agentpay@0.1.0;
+
+use rialo:primitives@0.1.0.{pubkey, lamports, timestamp, error};
+
+world rialo-agentpay {
+    export execute: func(recipient: pubkey) -> result<_, error>;
+    export start: func(amount: u64, recipient: pubkey) -> result<_, error>;
+}

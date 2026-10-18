@@ -1,0 +1,141 @@
+/* ==========================================================================
+   RIALO AGENTPAY — PHASE 7D PUBLIC VERIFY (verify.html extra styles)
+   Extends the shared AgentPay visual language (landing.css tokens,
+   app.css layout, dashboard.css card anatomy). No second system: every
+   color, radius, spacing step, and mono font comes from the existing
+   token set. The page is PUBLIC on purpose: no login-gated chrome, no
+   session-dependent state — the only input is a transaction signature.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   LOOKUP FORM — one field (the signature) + one action. The signature is
+   the ONLY input the endpoint accepts; the backend owns validation and
+   this form only forwards it.
+   -------------------------------------------------------------------------- */
+.verify-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--s-3);
+}
+
+.verify-form__field {
+    flex: 1 1 320px;
+    min-width: 0;
+}
+
+.verify-form .agents-input {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    letter-spacing: 0.02em;
+}
+
+.verify-form__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    align-items: center;
+}
+
+.verify-hint {
+    margin: var(--s-3) 0 0;
+    font-size: 12px;
+    color: var(--text-3);
+}
+
+/* --------------------------------------------------------------------------
+   VERDICT — the one-line outcome above the field read-out. Tone comes
+   from the canonical backend status token; nothing is inferred.
+   -------------------------------------------------------------------------- */
+.verify-verdict {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-3);
+    margin: 0 0 var(--s-5);
+}
+
+.verify-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line-strong);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-2);
+    background: var(--bg-raise);
+}
+.verify-badge::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+.verify-badge--ok    { color: var(--lime);  border-color: rgba(var(--lime-rgb), 0.4); }
+.verify-badge--warn  { color: var(--amber); border-color: rgba(251, 191, 36, 0.35); }
+.verify-badge--bad   { color: var(--red);   border-color: rgba(248, 113, 113, 0.35); }
+.verify-badge--na    { color: var(--text-3); border-color: var(--line-strong); }
+
+.verify-verdict__note {
+    font-size: 13px;
+    color: var(--text-2);
+    min-width: 0;
+}
+
+/* The on-chain error string (public DTO field, shown only when the
+   transaction executed=false): escaped, static font, break-safe. */
+.verify-node-error {
+    margin: var(--s-2) 0 0;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--red);
+    overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------------------
+   FIELD READ-OUT — reuses dashboard.css's .kv row anatomy for the nine
+   public verification fields. Long signatures/addresses break inside
+   the cell (same .dash-id discipline as the dashboard identity blocks).
+   -------------------------------------------------------------------------- */
+.verify-kv dd.verify-cell--break {
+    word-break: break-all;
+    letter-spacing: -0.01em;
+}
+
+.verify-cell--sub {
+    color: var(--text-3);
+    font-size: 11px;
+}
+
+.verify-cell--ok     { color: var(--lime); }
+.verify-cell--bad    { color: var(--red); }
+.verify-cell--neutral { color: var(--text-2); }
+
+.verify-cell--time { cursor: help; }
+
+/* --------------------------------------------------------------------------
+   RESPONSIVE — the project's existing breakpoint scale (1024 / 760 /
+   560 / 420 from app.css & landing.css).
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 760px) {
+    .verify-form__field { flex-basis: 100%; }
+    .verify-form__actions .wallet-btn { width: 100%; }
+}
+
+@media (max-width: 420px) {
+    .verify-verdict { gap: var(--s-2); }
+    .verify-badge { font-size: 9.5px; }
+}
+
+/* reduced motion: keep the status dot pulse off (shared landing.css
+   rule already covers .status; the page badge is static by design) */
+@media (prefers-reduced-motion: reduce) {
+    .status--on .status__dot { animation: none; }
+}

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AgentPay agents — owner-scoped agent registry: create, rename, lifecycle, live balance and payment policy. Real data only.">
+    <title>Agents — Rialo AgentPay</title>
+    <link rel="stylesheet" href="landing.css?v=16">
+    <link rel="stylesheet" href="app.css?v=9">
+    <link rel="stylesheet" href="dashboard.css?v=7">
+    <link rel="stylesheet" href="agents.css?v=1">
+</head>
+
+<body class="app-body">
+
+<div class="landing-bg" aria-hidden="true"></div>
+
+<!-- ================= SHARED NAV (nav.js; static fallback keeps
+     brand + auth slot before JS renders the full navigation) ================= -->
+
+<nav class="nav" aria-label="Primary">
+    <div class="container nav__inner" data-agentpay-nav>
+        <a class="brand" href="/">
+            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
+        </a>
+        <div class="nav__right">
+            <a class="github-login" href="/auth/github">Login with GitHub <span>↗</span></a>
+        </div>
+    </div>
+</nav>
+
+<main>
+    <section class="app-page container">
+
+        <header class="app-page__head">
+            <p class="eyebrow">Agent&nbsp;Registry</p>
+            <h1 class="app-title">Your&nbsp;<span class="dim">Agents.</span></h1>
+            <p class="app-lede">
+                Agents are separate entities owned by your account — each with
+                its own independent Rialo wallet, lifecycle status, and payment
+                policy. Every value on this page is read live from the AgentPay
+                API; unavailable data shows an explicit empty state, never a
+                simulated number. Payments are not executed from this page.
+            </p>
+
+            <div class="dash-status-bar" aria-label="Page state">
+                <span class="status status--na" id="registryState">
+                    <span class="status__dot" aria-hidden="true"></span>
+                    <span class="status__label">Registry — loading</span>
+                </span>
+            </div>
+        </header>
+
+        <div class="dash-grid">
+
+            <!-- ================= CREATE — gated for signed-in users ======== -->
+            <section class="card dashboard-card" aria-labelledby="createLabel" id="createCard" hidden>
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="createLabel">New&nbsp;Agent</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="badge badge--cyan">Server-minted&nbsp;ID</span>
+                    </div>
+                </div>
+                <div class="dashboard-card__body">
+                    <form id="createForm" class="agents-form" autocomplete="off">
+                        <label class="field-label" for="agentName">Name&nbsp;(1–64&nbsp;characters)</label>
+                        <input class="agents-input" id="agentName" name="name" type="text"
+                               maxlength="64" placeholder="e.g. Ops Payer" required>
+                        <button type="submit" class="wallet-btn wallet-btn--solid" id="createBtn">
+                            Create&nbsp;Agent
+                            <span>→</span>
+                        </button>
+                    </form>
+                    <p class="agents-msg" id="createMsg" role="status"></p>
+                    <span class="field-hint">Creation mints a draft agent plus its own independent wallet keypair server-side (mode 600, create-new only). Only the public address is shown here.</span>
+                </div>
+            </section>
+
+            <!-- ================= AGENT LIST ================================ -->
+            <section class="card dashboard-card dashboard-card--span" aria-labelledby="listLabel">
+                <div class="panel-head dashboard-card__header">
+                    <span class="label" id="listLabel">Agent&nbsp;Registry</span>
+                    <div class="panel-head__meta dashboard-card__meta">
+                        <span class="status status--na" id="listCount">
+                            <span class="status__label">Loading</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="dashboard-card__body" id="agentList">
+                    <div class="gated-note" id="listGated">
+                        <span class="badge">Auth&nbsp;required</span>
+                        <span>Sign in with GitHub to view and manage your agents.</span>
+                        <a class="wallet-btn wallet-btn--solid" href="/auth/github">
+                            Login&nbsp;with&nbsp;GitHub
+                            <span>↗</span>
+                        </a>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+
+        <footer class="app-footer">
+            <div class="footer__meta">
+                <span>Rialo&nbsp;AgentPay</span>
+                <span>Testnet</span>
+                <span>Real&nbsp;data&nbsp;only&nbsp;—&nbsp;or&nbsp;none</span>
+            </div>
+        </footer>
+
+    </section>
+</main>
+
+<script src="nav.js?v=6"></script>
+<script src="auth.js?v=5"></script>
+<script src="agents.js?v=4"></script>
+
+</body>
+</html>

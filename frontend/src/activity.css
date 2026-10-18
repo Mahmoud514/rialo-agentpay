@@ -1,0 +1,221 @@
+/* ==========================================================================
+   RIALO AGENTPAY — ACTIVITY PAGE (activity.html)
+   Phases 7 Step 1: owner-scoped per-agent activity feed.
+   Extends landing.css (frozen :root tokens + status system) + app.css +
+   dashboard.css + agents.css; loads fourth and last. Everything rendered
+   on this page comes from the existing owner lane
+   GET /api/agents/{id}/activity — no data is simulated here.
+   ========================================================================== */
+
+/* .wallet-btn--sm sizing now lives in the shared app layer (app.css
+   BUTTONS section) so activity + leaderboard render the identical
+   "Agents →" treatment from the same class. */
+
+/* agent address inside the context block — readability only */
+.act-addr {
+    letter-spacing: -0.01em;
+    word-break: break-all;
+}
+
+.ac-addr {
+    letter-spacing: -0.01em;
+    word-break: break-all;
+}
+
+/* ------------------------------
+   FILTERS (agents-input language; field wrappers own label+control)
+   ------------------------------ */
+
+.activity-filters {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    min-width: 0;
+}
+
+.activity-filters__row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--s-3) var(--s-5);
+    align-items: end;
+    min-width: 0;
+}
+
+.activity-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-width: 0;
+}
+
+.activity-field > .agents-input {
+    width: 100%;
+}
+
+/* <select> has no native placeholder text: keep it visually identical to
+   the other agents-inputs — the "any" option just is the placeholder */
+.agents-select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 34px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23838a80' stroke-width='1.5'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    cursor: pointer;
+}
+
+.activity-filters__actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+}
+
+/* ------------------------------
+   FEED HEAD (column legend above the rows)
+   ------------------------------ */
+
+/* the feed header row: same mono label language as .label, dimmer; the
+   column track set mirrors .act-row exactly so legend and rows align */
+.act-head {
+    display: grid;
+    grid-template-columns: 170px 110px 150px minmax(150px, 1.4fr) 120px minmax(150px, 1.4fr) 120px;
+    gap: var(--s-4);
+    align-items: center;
+    padding: var(--s-3) var(--s-1);
+    min-width: 0;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+/* ------------------------------
+   FEED ROWS — deterministic server order; this page NEVER re-sorts,
+   NEVER paginates by offset — rows are appended exactly as returned.
+   The row grid has a fixed comfortable width (seven data columns); the
+   established .data-table .kv wrap pattern holds it in a scroll wrapper
+   at every viewport width, so the page never overflows horizontally.
+   ------------------------------ */
+
+.act-rows {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    min-width: 0;
+    max-width: 100%;
+}
+
+.act-row {
+    display: grid;
+    grid-template-columns: 170px 110px 150px minmax(150px, 1.4fr) 120px minmax(150px, 1.4fr) 120px;
+    gap: var(--s-4);
+    align-items: center;
+    padding: var(--s-3) var(--s-1);
+    min-width: 0;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.06);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    color: var(--text-2);
+}
+
+.act-row:last-child {
+    border-bottom: none;
+}
+
+.act-row__time {
+    min-width: 0;
+    white-space: nowrap;
+    color: var(--text-2);
+}
+
+.act-row__amount {
+    min-width: 0;
+    white-space: nowrap;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.act-row__state .status {
+    white-space: normal;
+    max-width: 100%;
+}
+
+.act-row__state .status__label {
+    overflow-wrap: anywhere;
+}
+
+.act-row__recipient {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.act-row__principal {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--text-3);
+}
+
+.act-row__sig {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.act-row__corr {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--text-3);
+}
+
+.act-fail {
+    color: var(--red);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.act-authz {
+    color: var(--cyan);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* ------------------------------
+   LOAD MORE (cursor continuation; server order, no offset)
+   ------------------------------ */
+
+.activity-loadmore {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s-4);
+    margin-top: var(--s-4);
+    padding-top: var(--s-4);
+    border-top: 1px dashed var(--line-strong);
+}
+
+.activity-loadmore .field-hint {
+    margin: 0;
+}
+
+/* ------------------------------
+   RESPONSIVE — approved app breakpoints only (1024/760/560/420); no new ones.
+   ------------------------------ */
+
+@media (max-width: 760px) {
+    .activity-filters__row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 560px) {
+    .act-row,
+    .act-head {
+        font-size: 11px;
+    }
+}

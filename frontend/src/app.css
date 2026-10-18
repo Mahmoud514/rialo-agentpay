@@ -1,0 +1,506 @@
+/* ==========================================================================
+   RIALO AGENTPAY — AUTHENTICATED APP PAGES (wallet.html)
+   Extends landing.css; uses its design tokens only. No second system.
+   wallet.html loads: landing.css (shared tokens/nav/cards) + app.css (here).
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   APP PAGE LAYOUT
+   -------------------------------------------------------------------------- */
+
+.app-page {
+    padding-top: var(--nav-h);   /* clears the sticky navbar (tokenized) */
+    padding-bottom: var(--s-9);
+}
+
+.app-page__head { margin-bottom: var(--s-8); }
+
+.app-title {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(36px, 4.6vw, 56px);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-transform: uppercase;
+    margin-top: var(--s-4);
+}
+.app-title .dim { color: var(--text-3); }
+
+.app-lede {
+    margin-top: var(--s-4);
+    max-width: 62ch;
+    color: var(--text-2);
+    font-size: 15.5px;
+    line-height: 1.7;
+}
+
+/* card stack — follows the shared wide container, capped so the payment
+   proportions stay readable on ultra-wide screens */
+.app-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+    max-width: min(1440px, 100%);
+}
+
+/* panel card header (same anatomy as landing .card__idx rows) */
+.panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s-4);
+    padding-bottom: var(--s-4);
+    border-bottom: 1px solid var(--line);
+    margin-bottom: var(--s-6);
+}
+
+/* --------------------------------------------------------------------------
+   WALLET OVERVIEW
+   -------------------------------------------------------------------------- */
+
+.wallet-grid {
+    display: grid;
+    grid-template-columns: minmax(170px, 0.7fr) minmax(0, 1.5fr) minmax(150px, 0.8fr);
+    align-items: stretch;
+    gap: var(--s-7);
+}
+
+.wallet-grid > .wallet-info,
+.wallet-grid > .faucet-cell {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* panel-head right side: badge + status grouped, wrap together on narrow bars */
+.panel-head__meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    min-width: 0;
+}
+
+/* primary app cards: lime edge illumination (colour only — no layout) */
+.wallet-card,
+.payment-card {
+    border-color: rgba(var(--lime-rgb), 0.24);
+    box-shadow: inset 0 1px 0 rgba(var(--lime-rgb), 0.06), var(--glow-lime-soft);
+}
+
+/* quiet mono annotation under a field — facts, not marketing copy */
+.field-hint {
+    display: block;
+    margin-top: var(--s-3);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    line-height: 1.6;
+    color: var(--text-3);
+}
+
+.field-label {
+    display: block;
+    margin-bottom: var(--s-3);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+.address-row,
+.wallet-address-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    min-width: 0;
+}
+
+#walletAddress {
+    font-family: var(--font-mono);
+    font-size: 14.5px;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.wallet-address-cell .wallet-address-row { margin-top: auto; margin-bottom: auto; }
+
+#walletAddress.is-placeholder {
+    color: var(--text-3);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 12px;
+}
+
+.wallet-balance,
+#walletBalance {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: clamp(26px, 3.2vw, 34px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    color: var(--lime);
+    text-shadow: 0 0 24px rgba(var(--lime-rgb), 0.35);
+    white-space: nowrap;
+}
+
+#walletBalance.is-na { color: var(--text-3); font-weight: 500; font-size: clamp(20px, 2.4vw, 24px); }
+
+/* first cell = the headline figure; subsequent cells divided by hairlines */
+.balance-cell { padding-right: var(--s-7); }
+
+.wallet-address-cell {
+    padding-left: var(--s-7);
+    border-left: 1px solid var(--line);
+}
+
+.faucet-cell {
+    padding-left: var(--s-7);
+    border-left: 1px solid var(--line);
+    gap: var(--s-2);
+}
+
+.faucet-cell .field-label { margin-bottom: 0; }
+.faucet-cell .faucet-btn { margin-top: var(--s-3); justify-self: start; }
+
+/* --------------------------------------------------------------------------
+   BUTTONS (wallet actions — landing button anatomy)
+   -------------------------------------------------------------------------- */
+
+.wallet-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-3);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 12px 18px;
+    border: 1px solid var(--line-lime);
+    border-radius: var(--radius);
+    background: rgba(var(--lime-rgb), 0.08);
+    color: var(--lime);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background var(--t-fast), border-color var(--t-fast),
+                transform var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.wallet-btn:hover:not(:disabled) {
+    background: rgba(var(--lime-rgb), 0.14);
+    border-color: rgba(var(--lime-rgb), 0.5);
+    box-shadow: var(--glow-lime-soft);
+    transform: translateY(-1px);
+}
+
+.wallet-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.wallet-btn--solid {
+    background: var(--lime);
+    border-color: var(--lime);
+    color: #10140a;
+    box-shadow: var(--glow-lime);
+}
+
+.wallet-btn--solid:hover:not(:disabled) {
+    background: var(--lime-bright);
+    border-color: var(--lime-bright);
+    box-shadow: 0 0 0 1px rgba(var(--lime-rgb),.35), 0 12px 36px -12px rgba(var(--lime-rgb),.5);
+}
+
+.wallet-btn--solid:disabled {
+    background: var(--panel-2);
+    border-color: var(--line);
+    color: var(--text-3);
+    box-shadow: none;
+}
+
+/* small variant — same anatomy as landing .btn--sm, applied to the
+   established wallet-btn language (sizing only, no new component).
+   Declared in the shared app layer: activity.html and leaderboard.html
+   use .wallet-btn--sm for the identical "Agents →" action in their
+   status-card headers; the sizing previously lived in activity.css,
+   which only activity loads, so the same class rendered one step
+   larger on leaderboard. */
+.wallet-btn--sm {
+    padding: 9px 16px;
+    font-size: 11px;
+}
+
+.copy-btn { padding: 9px 14px; font-size: 10.5px; }
+
+/* --------------------------------------------------------------------------
+   PAYMENT FORM
+   -------------------------------------------------------------------------- */
+
+.payment-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(140px, 0.5fr) auto;
+    align-items: end;
+    gap: var(--s-5);
+}
+
+.payment-field { min-width: 0; }
+
+.payment-field input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg-raise);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    padding: 13px 16px;
+    outline: none;
+    transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.payment-field input:focus {
+    border-color: var(--line-cyan);
+    box-shadow: 0 0 0 1px rgba(103, 232, 249, 0.18), var(--glow-cyan-soft);
+}
+.payment-field input::placeholder { color: var(--text-3); letter-spacing: 0.04em; }
+
+/* status line — honest, monospace, semantic color */
+.payment-status {
+    grid-column: 1 / -1;
+    min-height: 20px;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+}
+
+.payment-status.error   { color: var(--red); }
+.payment-status.success { color: var(--lime); }
+.payment-status.pending { color: var(--cyan); }
+
+/* signature receipt */
+.payment-result {
+    grid-column: 1 / -1;
+    margin-top: var(--s-2);
+    padding: var(--s-4) var(--s-5);
+    background: rgba(var(--lime-rgb), 0.04);
+    border: 1px solid var(--line-lime);
+    border-radius: var(--radius);
+}
+
+.payment-result__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    margin-bottom: var(--s-2);
+}
+
+.payment-result small {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+#paymentSignature {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--lime);
+    word-break: break-all;
+    font-weight: 500;
+}
+
+/* logged-out notice inside payment card */
+.gated-note {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    flex-wrap: wrap;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+.gated-note > span:nth-child(2) { flex: 1 1 260px; }
+
+.gated-login-btn {
+    text-decoration: none;
+    margin-left: auto;
+}
+.gated-login-btn:hover { color: #10140a; }
+
+/* --------------------------------------------------------------------------
+   APP NAVBAR (wallet.html) — same nav anatomy as landing, always-visible
+   app links with an active state, chip that never overflows the bar.
+   -------------------------------------------------------------------------- */
+
+/* App navbar keeps the sticky landing nav anatomy; only app-link behavior differs. */
+
+.app-body .nav__app-links--always { display: flex; }
+
+.app-body .nav__app-links .is-active,
+.app-body .nav__app-links .is-active:hover {
+    color: var(--lime);
+    border-color: var(--line-lime);
+    background: rgba(var(--lime-rgb), 0.05);
+    transform: none;
+}
+
+/* APP NAVBAR WIDTH TIERS (D2) — root cause: on app pages the nav row is
+   brand + marketing + 7 app buttons + login/chip, all flex-shrink:0 except
+   the chip. Full-size it needs 181 + 492.6 + 658.1 + 186.95 + 2x32 = 1594px
+   of content — overflows every viewport below ~1627px (measured
+   scrollWidth 1627: worst at 768 +345, at 1311-1600 +331..+42 when the
+   marketing row reappears above the 901px media cutoff: the reported defect).
+   Fix: .app-body-scoped compact tiers. No link is ever removed from the DOM
+   and the login/chip is never removed or re-pointed; hrefs untouched. The
+   only visibility step (brand name at <901px) matches the established
+   mobile language — the existing <=420 block already hides it there, the
+   brand mark stays. Measured logged-out fits (content = vw - 2*gutter):
+     561-900:   mark26 + app332 (8px/5x5) + login128 (9px/5x7) + gaps = 504
+                <= 521 (561) .. 844 (900)
+     901-1310:  brand181 + app429 (9px/6x8) + login149 (10px/6x10) + 20
+                = 779 <= 845
+     1311-1600: brand181 + mk418 (10px/6x8) + app429 + login149 + 32
+                = 1209 <= 1247 (1311) .. 1536 (1600); logged in, badge
+                yields (same "badge always yields" pattern as the 901-1310
+                block) */
+
+@media (min-width: 561px) and (max-width: 900px) {
+    /* row without marketing (hidden by the existing <=900 block): mark-only
+       brand + AGGRESSIVE compact tier. Full-size 7-button min-content alone
+       is 658px, which does not fit 561-900 content (521-844px), so this
+       tier is the only way to keep all 7 app links visible at these widths. */
+    .app-body .nav__inner { gap: 8px; }
+    .app-body .nav__right { gap: 6px; }
+    .app-body .brand__name { display: none; }
+    .app-body .nav__app-links { gap: var(--s-1); }
+}
+@media (min-width: 901px) {
+    /* full brand returns; one-step compact tier keeps the row within
+       content at 901 and up (full size needs >=1120 content for 7 buttons,
+       >=1658 once marketing rejoins). */
+    .app-body .nav__app-links { gap: var(--s-1); }
+}
+@media (min-width: 1311px) {
+    /* marketing row re-enters above the 901px cutoff (landing.css): one step
+       down on the marketing links + app buttons/login already compact so the
+       six-part row fits from 1311 content (1247px) to 1600 (1536px) */
+    .app-body .nav__link { padding: 6px 8px; font-size: 10px; letter-spacing: 0.06em; }
+    .app-body .nav__app-links { gap: var(--s-1); }
+    .app-body .github-login:not(.github-user) { padding: 6px 10px; font-size: 10px; letter-spacing: 0.06em; }
+    /* badge yields from marketing re-entry (pattern: the 901-1310 "badge
+       always yields" rule) so the signed-in chip + every link coexists */
+    .app-body .github-login.github-user .connected-badge { display: none; }
+}
+
+/* auth chip must never push the navbar wider than the viewport */
+.app-body .nav__right { min-width: 0; }
+.app-body .github-login.github-user { max-width: 100%; flex-shrink: 1; }
+
+/* --------------------------------------------------------------------------
+   APP FOOTER (same anatomy as landing footer)
+   -------------------------------------------------------------------------- */
+
+.app-footer {
+    margin-top: var(--s-9);
+    padding-top: var(--s-5);
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--s-4);
+    flex-wrap: wrap;
+}
+
+.app-footer .footer__meta { font-size: 9.5px; }
+
+/* --------------------------------------------------------------------------
+   RESPONSIVE
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 1024px) {
+    .wallet-grid {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        row-gap: var(--s-6);
+    }
+    .wallet-grid .faucet-cell {
+        grid-column: 1 / -1;
+        border-left: none;
+        padding-left: 0;
+        border-top: 1px solid var(--line);
+        padding-top: var(--s-5);
+    }
+    .faucet-cell .faucet-btn { justify-self: start; width: auto; }
+    .balance-cell { padding-right: var(--s-5); }
+    .wallet-address-cell { padding-left: var(--s-5); }
+}
+
+@media (max-width: 760px) {
+    .app-page { padding-top: 48px; padding-bottom: 64px; }
+    .app-page__head { margin-bottom: var(--s-6); }
+
+    .wallet-grid { grid-template-columns: minmax(0, 1fr); gap: var(--s-5); }
+
+    /* stacked: every divider becomes a top rule, padding resets */
+    .balance-cell { padding-right: 0; }
+    .wallet-address-cell {
+        padding-left: 0;
+        border-left: none;
+        border-top: 1px solid var(--line);
+        padding-top: var(--s-5);
+    }
+    .wallet-grid .faucet-cell { grid-column: auto; }
+    .wallet-address-cell .wallet-address-row { margin: 0; }
+    .faucet-btn { width: 100%; }
+    .faucet-cell .faucet-btn { justify-self: stretch; }
+    .address-row,
+    .wallet-address-row { flex-direction: column; align-items: flex-start; gap: var(--s-3); }
+    .copy-btn { width: 100%; }
+
+    .panel-head__meta { width: 100%; }
+
+    .payment-form { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+    .send-btn-cell { justify-self: stretch; }
+    .send-btn-cell .wallet-btn { width: 100%; }
+
+    .gated-login-btn { margin-left: 0; width: 100%; }
+}
+
+@media (max-width: 560px) {
+    /* headline figure still dominates; hints stay legible, no overflow */
+    #walletBalance { font-size: clamp(24px, 7vw, 30px); }
+    .wallet-grid { gap: var(--s-4); }
+    .field-hint { font-size: 9.5px; }
+    .wallet-btn,
+    .gated-note .wallet-btn { width: 100%; }
+}
+
+@media (max-width: 420px) {
+    .app-title { font-size: 30px; }
+    .card { padding: var(--s-5); }
+    .wallet-grid { gap: var(--s-4); row-gap: var(--s-4); }
+    #walletBalance.is-na { font-size: 18px; }
+    .payment-result { padding: var(--s-4); }
+    .payment-result__head { flex-direction: column; align-items: flex-start; gap: var(--s-2); }
+}

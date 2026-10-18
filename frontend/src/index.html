@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AgentPay — programmable payments for autonomous software agents, settled on-chain by Rialo.">
+    <title>Rialo AgentPay — Payments for Autonomous Agents</title>
+    <link rel="stylesheet" href="landing.css?v=16">
+</head>
+
+<body>
+
+<div class="landing-bg" aria-hidden="true"></div>
+
+<!-- ================= NAV (shared component — nav.js; static fallback keeps
+     brand + auth slot before JS renders the full navigation) ================= -->
+
+<nav class="nav" aria-label="Primary">
+    <div class="container nav__inner" data-agentpay-nav>
+        <a class="brand" href="/">
+            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
+        </a>
+        <div class="nav__right">
+            <a class="github-login" href="/auth/github">Login with GitHub <span>↗</span></a>
+        </div>
+    </div>
+</nav>
+
+<main>
+
+<!-- ================= 00 — HERO ================= -->
+
+<header class="hero section--flush">
+    <div class="container hero__grid">
+
+        <div>
+            <p class="eyebrow hero__eyebrow">
+                Rialo&nbsp;· Agent Payments Layer&nbsp;· Testnet
+            </p>
+
+            <h1 class="hero__title">
+                Payments<br>
+                <span class="nb">for Autonomous</span><br>
+                Agents.
+            </h1>
+
+            <p class="hero__lede">
+                Give autonomous software a wallet, define how it can pay,
+                and let Rialo settle the transaction on-chain.
+            </p>
+
+            <div class="btn-row">
+                <a class="btn btn--primary" id="launchApp" href="/auth/github">
+                    Launch&nbsp;App <span class="arr">→</span>
+                </a>
+                <a class="btn btn--ghost" href="#architecture">
+                    Read&nbsp;Docs <span class="arr">→</span>
+                </a>
+            </div>
+
+            <div class="hero__meta">
+                <span class="status status--na" id="stAgentpay">
+                    <span class="status__dot" aria-hidden="true"></span>
+                    <span class="status__label">Checking</span>
+                </span>
+                <span class="label">AgentPay&nbsp;service</span>
+                <span class="status status--na" id="stRpc">
+                    <span class="status__dot" aria-hidden="true"></span>
+                    <span class="status__label">Checking</span>
+                </span>
+                <span class="label">Rialo&nbsp;RPC</span>
+            </div>
+        </div>
+
+        <!-- decorative pipeline panel — describes the product model, contains no data -->
+        <aside class="flowpanel reveal" aria-label="Agent payment pipeline diagram">
+            <div class="flowpanel__head">
+                <span class="label">Payment&nbsp;Pipeline</span>
+                <span class="badge badge--cyan">Schema&nbsp;View</span>
+            </div>
+
+            <ol class="flow">
+                <li class="flow__node flow__node--lime">
+                    <span class="flow__num">01</span>
+                    <div>
+                        <span class="flow__name">Agent</span>
+                        <span class="flow__desc">Autonomous software</span>
+                    </div>
+                </li>
+                <li class="flow__link flow__link--animated" aria-hidden="true"></li>
+                <li class="flow__node">
+                    <span class="flow__num">02</span>
+                    <div>
+                        <span class="flow__name">Wallet</span>
+                        <span class="flow__desc">Per-agent identity</span>
+                    </div>
+                </li>
+                <li class="flow__link flow__link--animated" aria-hidden="true"></li>
+                <li class="flow__node">
+                    <span class="flow__num">03</span>
+                    <div>
+                        <span class="flow__name">Payment&nbsp;Policy</span>
+                        <span class="flow__desc">Rules · limits · conditions</span>
+                    </div>
+                </li>
+                <li class="flow__link flow__link--animated" aria-hidden="true"></li>
+                <li class="flow__node flow__node--cyan">
+                    <span class="flow__num">04</span>
+                    <div>
+                        <span class="flow__name">Rialo</span>
+                        <span class="flow__desc">On-chain settlement</span>
+                    </div>
+                </li>
+                <li class="flow__link flow__link--animated" aria-hidden="true"></li>
+                <li class="flow__node">
+                    <span class="flow__num">05</span>
+                    <div>
+                        <span class="flow__name">Recipient</span>
+                        <span class="flow__desc">Any Rialo address</span>
+                    </div>
+                </li>
+            </ol>
+        </aside>
+
+    </div>
+</header>
+
+<!-- ================= 01 — THE PREMISE ================= -->
+
+<section class="section" id="premise">
+    <div class="container">
+
+        <div class="sec-head reveal">
+            <p class="eyebrow"><span class="num">01</span>&nbsp;·&nbsp;The&nbsp;Premise</p>
+            <h2 class="sec-title">AI can act.<br><span class="dim">Now it can pay.</span></h2>
+            <p class="sec-lede">
+                Agents already browse, negotiate, buy compute and call APIs. What they
+                could not do was settle — hold a real wallet and move real value under
+                rules their operator controls. AgentPay closes that gap: an identity-bound
+                wallet, programmable payment policy, and on-chain settlement on Rialo.
+            </p>
+        </div>
+
+        <div class="grid-4">
+            <article class="card card--tick premise-card reveal">
+                <div class="card__idx"><span>01</span><span class="badge">Wallet</span></div>
+                <h3 class="card__title">Agent&nbsp;Wallet</h3>
+                <p class="card__body">
+                    Each agent gets a Rialo payment identity, with transaction signing
+                    isolated behind a hardened signer boundary.
+                </p>
+                <div class="card__foot">
+                    <span class="label">Identity-bound</span>
+                    <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                </div>
+            </article>
+
+            <article class="card card--tick premise-card reveal">
+                <div class="card__idx"><span>02</span><span class="badge">Policy</span></div>
+                <h3 class="card__title">Programmable<br>Payments</h3>
+                <p class="card__body">
+                    Payments are defined as rules: who may be paid, how much, under what
+                    condition. The policy, not a human, sits between the agent and the chain.
+                </p>
+                <div class="card__foot">
+                    <span class="label">Direct transfer</span>
+                    <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                </div>
+            </article>
+
+            <article class="card card--tick premise-card reveal">
+                <div class="card__idx"><span>03</span><span class="badge">Chain</span></div>
+                <h3 class="card__title">On-chain<br>Settlement</h3>
+                <p class="card__body">
+                    Approved payments settle through the Rialo network — final, signed
+                    transactions, not ledger entries inside a closed system.
+                </p>
+                <div class="card__foot">
+                    <span class="label">Rialo Testnet</span>
+                    <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                </div>
+            </article>
+
+            <article class="card card--tick premise-card reveal">
+                <div class="card__idx"><span>04</span><span class="badge">Proof</span></div>
+                <h3 class="card__title">Verifiable<br>Activity</h3>
+                <p class="card__body">
+                    Every settlement returns a real transaction signature. Activity is
+                    provable against the chain — auditable by anyone, trustable by machines.
+                </p>
+                <div class="card__foot">
+                    <span class="label">Signatures</span>
+                    <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                </div>
+            </article>
+        </div>
+
+    </div>
+</section>
+
+<!-- ================= 02 — HOW IT WORKS ================= -->
+
+<section class="section" id="how">
+    <div class="container">
+
+        <div class="sec-head reveal">
+            <p class="eyebrow"><span class="num">02</span>&nbsp;·&nbsp;How&nbsp;It&nbsp;Works</p>
+            <h2 class="sec-title">Five steps<br><span class="dim">from agent to settlement.</span></h2>
+            <p class="sec-lede">
+                The operator configures once. After that, the agent acts and Rialo settles —
+                without a human in the transaction path.
+            </p>
+        </div>
+
+        <div class="steps reveal">
+            <div class="step">
+                <span class="step__num">01</span><span class="step__arrow" aria-hidden="true">→</span>
+                <h3 class="step__title">Create</h3>
+                <p class="step__body">Authenticate the agent's owner with GitHub and open its AgentPay session.</p>
+                <span class="step__key">GitHub&nbsp;OAuth&nbsp;→&nbsp;Session</span>
+            </div>
+            <div class="step">
+                <span class="step__num">02</span><span class="step__arrow" aria-hidden="true">→</span>
+                <h3 class="step__title">Fund</h3>
+                <p class="step__body">Create the agent and fund its wallet. Agent wallets are operator-funded — no faucet for them.</p>
+                <span class="step__key">Wallet&nbsp;·&nbsp;Fund</span>
+            </div>
+            <div class="step">
+                <span class="step__num">03</span><span class="step__arrow" aria-hidden="true">→</span>
+                <h3 class="step__title">Define</h3>
+                <p class="step__body">Set the payment policy: recipients, amounts, conditions the agent must satisfy.</p>
+                <span class="step__key">Policy&nbsp;rules</span>
+            </div>
+            <div class="step">
+                <span class="step__num">04</span><span class="step__arrow" aria-hidden="true">→</span>
+                <h3 class="step__title">Execute</h3>
+                <p class="step__body">The agent triggers a payment when its condition is met — autonomously, via API.</p>
+                <span class="step__key">POST&nbsp;/api/agents/triggers/payments</span>
+            </div>
+            <div class="step">
+                <span class="step__num">05</span>
+                <h3 class="step__title">Settle</h3>
+                <p class="step__body">Rialo finalizes the transaction on-chain and returns the signature as proof.</p>
+                <span class="step__key">Signature&nbsp;·&nbsp;Receipt</span>
+            </div>
+        </div>
+
+    </div>
+</section>
+
+<!-- ================= 03 — ARCHITECTURE ================= -->
+
+<section class="section" id="architecture">
+    <div class="container">
+
+        <div class="sec-head reveal">
+            <p class="eyebrow"><span class="num">03</span>&nbsp;·&nbsp;Architecture</p>
+            <h2 class="sec-title">Identity in.<br><span class="dim">Signature out.</span></h2>
+            <p class="sec-lede">
+                Everything on this page is pinned to the system as it ships today: the
+                real flow from GitHub identity to on-chain settlement, every route the
+                server registers, and every page it actually serves. No placeholders,
+                no simulated data.
+            </p>
+        </div>
+
+        <div class="arch" style="align-items:stretch;">
+
+            <div class="arch__stack reveal" aria-label="AgentPay architecture flow diagram">
+                <div class="arch__node arch__node--lime">
+                    <span></span>
+                    <div>
+                        <div class="arch__node-title">GitHub&nbsp;Identity</div>
+                        <div class="arch__node-sub">OAuth anchors every wallet to a verified GitHub account. One session mechanism: opaque cookie + server-side map.</div>
+                    </div>
+                    <span class="arch__node-meta">/auth/github</span>
+                </div>
+                <div class="arch__conn" aria-hidden="true"></div>
+                <div class="arch__node">
+                    <span></span>
+                    <div>
+                        <div class="arch__node-title">AgentPay&nbsp;Session</div>
+                        <div class="arch__node-sub">Session-scoped user + wallet state. The browser never holds key material.</div>
+                    </div>
+                    <span class="arch__node-meta">GET /api/me</span>
+                </div>
+                <div class="arch__conn" aria-hidden="true"></div>
+                <div class="arch__node">
+                    <span></span>
+                    <div>
+                        <div class="arch__node-title">Your&nbsp;Wallet</div>
+                        <div class="arch__node-sub">One persistent Rialo keypair per GitHub user id, created and held server-side (mode 600). The public address is shown; the key never leaves the server.</div>
+                    </div>
+                    <span class="arch__node-meta">wallet&nbsp;per&nbsp;user&nbsp;id</span>
+                </div>
+                <div class="arch__conn" aria-hidden="true"></div>
+                <div class="arch__node">
+                    <span></span>
+                    <div>
+                        <div class="arch__node-title">Your&nbsp;Agents</div>
+                        <div class="arch__node-sub">Separate entities owned by your account. Each receives an isolated signing identity; private keys stay behind a hardened signer boundary. Metadata mirrors only the public address. Lifecycle, policy, and payment gates are enforced server-side.</div>
+                    </div>
+                    <span class="arch__node-meta">isolated&nbsp;signer&nbsp;identity</span>
+                </div>
+                <div class="arch__conn" aria-hidden="true"></div>
+                <div class="arch__node">
+                    <span></span>
+                    <div>
+                        <div class="arch__node-title">Payment&nbsp;Policy</div>
+                        <div class="arch__node-sub">Versioned limits (per-transaction, daily) plus recipient and action allow-lists. Every unset limit and empty list denies — policy is read-only data checked before any transfer.</div>
+                    </div>
+                    <span class="arch__node-meta">deny-by-contract</span>
+                </div>
+                <div class="arch__conn" aria-hidden="true"></div>
+                <div class="arch__node arch__node--cyan">
+                    <span></span>
+                    <div>
+                        <div class="arch__node-title">Rialo</div>
+                        <div class="arch__node-sub">The settlement layer: balances, direct transfers, and the deployed Venus payment program — the program path stays disabled behind an explicit operator cap. One RPC configuration; one CLI signing path. Agent payments may optionally pass through an opt-in, env-configured Latch transport/policy gate in front of that same CLI-signed path — it never replaces the signing path, never holds key material, and stays fully inactive unless explicitly enabled.</div>
+                    </div>
+                    <span class="arch__node-meta">testnet&nbsp;RPC&nbsp;·&nbsp;Venus</span>
+                </div>
+                <div class="arch__conn" aria-hidden="true"></div>
+                <div class="arch__node">
+                    <span></span>
+                    <div>
+                        <div class="arch__node-title">Recipient</div>
+                        <div class="arch__node-sub">Any Rialo address: another agent, a service, or a human wallet. Every settlement returns a real transaction signature.</div>
+                    </div>
+                    <span class="arch__node-meta">32–44&nbsp;char&nbsp;address</span>
+                </div>
+            </div>
+
+            <div class="reveal">
+                <!-- Same sanctioned scroll containment as .lb-wrap / .act-rows:
+                     the wide route table scrolls inside the card on narrow
+                     viewports; the section itself never overflows. -->
+                <div class="kv-wrap">
+                <table class="kv">
+                    <caption>
+                        <span class="label">Route&nbsp;map&nbsp;—&nbsp;every&nbsp;route&nbsp;the&nbsp;server&nbsp;registers</span>
+                    </caption>
+                    <tbody>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/auth/github</span><br><span class="card__body">Start the GitHub OAuth flow.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/auth/github/callback</span><br><span class="card__body">OAuth callback; CSRF state verified.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/auth/logout</span><br><span class="card__body">Clear session + cookie.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/me</span><br><span class="card__body">Session, wallet address, balance with explicit status.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/api/faucet</span><br><span class="card__body">Request a 1 RLO Testnet airdrop to the session wallet.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/api/payment</span><br><span class="card__body">Direct transfer: validates recipient/amount, returns the real signature.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/program/status</span><br><span class="card__body">Venus program readiness snapshot; submits no transaction.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/api/payment/program/*</span><br><span class="card__body">Program-mediated payments — disabled until an operator sets an explicit cap.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/health</span><br><span class="card__body">AgentPay + Rialo RPC probe.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET·POST</th>
+                            <td><span class="value-mono">/api/agents</span><br><span class="card__body">List own agents / create a draft agent with its own independent wallet.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET·PATCH</th>
+                            <td><span class="value-mono">/api/agents/{id}</span><br><span class="card__body">Read one own agent / rename. Missing and foreign both answer not-found.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/agents/{id}/balance</span><br><span class="card__body">Real chain balance — ok / unavailable / no_wallet, never a fake zero.</span></td>
+                        </tr>
+                        <tr>
+                            <th>PATCH</th>
+                            <td><span class="value-mono">/api/agents/{id}/status</span><br><span class="card__body">Lifecycle transitions under a strict server-side state machine.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET·PATCH</th>
+                            <td><span class="value-mono">/api/agents/{id}/policy</span><br><span class="card__body">Versioned payment policy: limits + recipient/action allow-lists.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/api/agents/{id}/payments</span><br><span class="card__body">Explicit payment from the agent's OWN wallet, full gate chain.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/api/agents/triggers/payments</span><br><span class="card__body">Credential lane: X-Agent-Credential authenticates the agent principal.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/api/agents/{id}/payments/reconcile</span><br><span class="card__body">Read-only reconciliation of unknown outcomes (owner lane).</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/api/agents/triggers/payments/reconcile</span><br><span class="card__body">Credential-lane reconciliation — deterministic evidence only.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/agents/leaderboard</span><br><span class="card__body">Confirmed-volume ranking; ordering owned by the server.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/agents/stats</span><br><span class="card__body">Owner statistics — single read, zero query parameters.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/agents/{id}/stats</span><br><span class="card__body">Single-agent statistics — owner-scoped single read.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/agents/{id}/activity</span><br><span class="card__body">Per-agent replay ledger, paginated, server-ordered.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/agents/triggers/payments/activity</span><br><span class="card__body">Credential lane: read its own agent's ledger.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/public/agents/{id}/proofs</span><br><span class="card__body">Per-agent public proofs — no session, no credentials.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/public/verify</span><br><span class="card__body">Public signature verification against the chain — sessionless.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/agents/triggers/payments/stats</span><br><span class="card__body">Credential-lane statistics — owner- and parameter-free.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/schema</span><br><span class="card__body">Public schema view — credential storage format definition.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/auth/dev-login</span><br><span class="card__body">Local development only; mounted when DEV_LOGIN_USER_ID is set.</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="reveal" style="margin-top: var(--s-7);">
+            <p class="label" style="margin-bottom: var(--s-4);">Pages this system ships — each one real and reachable</p>
+            <div class="grid-3">
+
+                <article class="card card--tick arch-page-card">
+                    <div class="card__idx"><span>01</span></div>
+                    <h3 class="card__title">Wallet</h3>
+                    <p class="card__body">
+                        Your balance from the live RPC, your wallet address, the
+                        Testnet faucet, and the direct payment form — the signature
+                        returns right here on the page.
+                    </p>
+                    <div class="card__foot">
+                        <span class="value-mono">/wallet.html</span>
+                        <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                    </div>
+                </article>
+
+                <article class="card card--tick arch-page-card">
+                    <div class="card__idx"><span>02</span></div>
+                    <h3 class="card__title">Dashboard</h3>
+                    <p class="card__body">
+                        Live account, network, and program state in one place —
+                        block height, RPC probe, and the Venus program readiness
+                        snapshot with its safety-cap state.
+                    </p>
+                    <div class="card__foot">
+                        <span class="value-mono">/dashboard.html</span>
+                        <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                    </div>
+                </article>
+
+                <article class="card card--tick arch-page-card">
+                    <div class="card__idx"><span>03</span></div>
+                    <h3 class="card__title">Agents</h3>
+                    <p class="card__body">
+                        The owner-scoped registry: create agents, move their
+                        lifecycle, read their real chain balances, and edit their
+                        payment policy — all against the API above.
+                    </p>
+                    <div class="card__foot">
+                        <span class="value-mono">/agents.html</span>
+                        <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                    </div>
+                </article>
+
+                <article class="card card--tick arch-page-card">
+                    <div class="card__idx"><span>04</span></div>
+                    <h3 class="card__title">Activity</h3>
+                    <p class="card__body">
+                        The per-agent replay ledger — every payment intent with its
+                        state, in the server's deterministic order, with state,
+                        principal, recipient, amount, and time filters.
+                    </p>
+                    <div class="card__foot">
+                        <span class="value-mono">/activity.html</span>
+                        <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                    </div>
+                </article>
+
+                <article class="card card--tick arch-page-card">
+                    <div class="card__idx"><span>05</span></div>
+                    <h3 class="card__title">Leaderboard</h3>
+                    <p class="card__body">
+                        Your agents ranked by confirmed payment volume — the order is
+                        owned by the server and never re-ranked client-side. Empty
+                        until real confirmed payments exist.
+                    </p>
+                    <div class="card__foot">
+                        <span class="value-mono">/leaderboard.html</span>
+                        <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                    </div>
+                </article>
+
+                <article class="card card--tick arch-page-card">
+                    <div class="card__idx"><span>06</span></div>
+                    <h3 class="card__title">Verify</h3>
+                    <p class="card__body">
+                        Public, sessionless proof: paste any Testnet transaction
+                        signature and the chain answers with its on-chain record,
+                        no_status, or a typed error. Nothing inferred.
+                    </p>
+                    <div class="card__foot">
+                        <span class="value-mono">/verify.html</span>
+                        <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                    </div>
+                </article>
+
+            </div>
+
+            <p class="card__body" style="margin-top:16px; font-size:12.5px;">
+                <span class="badge badge--cyan">Honest&nbsp;state</span>
+                &nbsp;Every route above is registered in the server today and every page
+                above is shipped in this frontend. Human owner payments use file-based
+                storage; Agent payments use hardened signer with policy-verified IR.
+                The server never transmits or logs key material.
+            </p>
+        </div>
+
+    </div>
+</section>
+
+<!-- ================= 04 — LIVE NETWORK ================= -->
+
+<section class="section" id="network">
+    <div class="container">
+
+        <div class="sec-head reveal">
+            <p class="eyebrow"><span class="num">04</span>&nbsp;·&nbsp;Live&nbsp;Network</p>
+            <h2 class="sec-title">Real state —<br><span class="dim">or nothing at all.</span></h2>
+            <p class="sec-lede">
+                Every value below is fetched from the AgentPay backend and its Rialo RPC
+                probe. When a source is unreachable, the field shows <span class="na">—&nbsp;NOT&nbsp;AVAILABLE</span>
+                instead of a plausible number. This is the product rule, not a loading state.
+            </p>
+        </div>
+
+        <div class="net-grid">
+
+            <div class="card netcard reveal">
+                <span class="label netcard__label">AgentPay&nbsp;Service</span>
+                <strong class="netcard__value">
+                    <span class="status status--na" data-sync="stAgentpay"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Checking</span></span>
+                </strong>
+                <span class="netcard__sub">GET /api/health · agentpay</span>
+            </div>
+
+            <div class="card netcard reveal">
+                <span class="label netcard__label">Rialo&nbsp;RPC&nbsp;·&nbsp;Block&nbsp;Height</span>
+                <strong class="netcard__value" id="valBlock">—</strong>
+                <span class="netcard__sub" id="netRpcNote">GET /api/health · awaiting probe</span>
+            </div>
+
+            <div class="card netcard reveal" id="stProgramCard">
+                <span class="label netcard__label">Venus&nbsp;Payment&nbsp;Program</span>
+                <strong class="netcard__value"><span class="status status--na" id="stProgram"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Checking</span></span></strong>
+                <span class="netcard__sub" id="netProgramNote">GET /api/program/status · awaiting probe</span>
+            </div>
+
+        </div>
+
+        <div class="net-foot">
+            <span id="netUpdated">Last checked —</span>
+            <span>Auto-refresh&nbsp;30s&nbsp;·&nbsp;no&nbsp;simulated&nbsp;updates</span>
+        </div>
+
+    </div>
+</section>
+
+<!-- ================= 05 — LEADERBOARD ================= -->
+
+<section class="section" id="leaderboard">
+    <div class="container">
+
+        <div class="sec-head reveal">
+            <p class="eyebrow"><span class="num">05</span>&nbsp;·&nbsp;Leaderboard</p>
+            <h2 class="sec-title">Your agents<br><span class="dim">by verified activity.</span></h2>
+        </div>
+
+        <!-- Honest empty state: the live leaderboard is owner-scoped
+             (GET /api/agents/leaderboard, /leaderboard.html after login).
+             No global public board — no fake agents, no sample users. -->
+        <div class="empty reveal" role="note">
+            <span class="empty__icon" aria-hidden="true">—</span>
+            <p class="empty__title">No Verified Agent Activity Yet</p>
+            <p class="empty__body">
+                This public page shows no rankings by design: the live leaderboard is
+                owner-scoped — after GitHub login each account sees only its own agents,
+                ranked server-side by confirmed payment volume. There is no global
+                public board, so this section stays empty rather than showing
+                invented rankings.
+            </p>
+            <span class="empty__meta">
+                <span class="badge">Owner-scoped</span>
+                <span>Live&nbsp;at&nbsp;/leaderboard.html&nbsp;after&nbsp;login</span>
+            </span>
+        </div>
+
+    </div>
+</section>
+
+<!-- ================= 06 — RECENT ACTIVITY ================= -->
+
+<section class="section" id="activity">
+    <div class="container">
+
+        <div class="sec-head reveal">
+            <p class="eyebrow"><span class="num">06</span>&nbsp;·&nbsp;Recent&nbsp;Activity</p>
+            <h2 class="sec-title">Settlements,<br><span class="dim">as they land.</span></h2>
+        </div>
+
+        <div class="data-table-wrap reveal">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Time</th>
+                        <th scope="col">Signature</th>
+                        <th scope="col">From</th>
+                        <th scope="col">To</th>
+                        <th scope="col">Amount&nbsp;(RLO)</th>
+                        <th scope="col">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td colspan="6" style="white-space:normal; text-align:center; padding:56px 20px;">
+                            <span class="na">NO VERIFIED ACTIVITY YET</span><br>
+                            <span class="card__body" style="font-size:12.5px; margin-top:10px;">
+                                This public section would be a global settlement feed — one
+                                that does not exist. The live ledger is per-agent and
+                                owner-scoped (/activity.html after login). No sample hashes,
+                                no simulated rows — payments you make return their
+                                signature directly as proof.
+                            </span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p class="net-foot" style="border-top:none; margin-top:16px;">
+            <span>Global feed: not implemented · per-agent ledger live at /activity.html (owner-scoped)</span>
+        </p>
+
+    </div>
+</section>
+
+<!-- ================= 07 — WHY RIALO ================= -->
+
+<section class="section" id="why">
+    <div class="container">
+
+        <div class="sec-head reveal">
+            <p class="eyebrow"><span class="num">07</span>&nbsp;·&nbsp;Why&nbsp;Rialo</p>
+            <h2 class="sec-title">A settlement layer<br><span class="dim">machines can use.</span></h2>            <p class="sec-lede">
+                Not a claim of superiority — a description of the properties AgentPay
+                actually relies on today.
+            </p>
+        </div>
+
+        <div class="grid-4">
+            <article class="card why-card card--tick reveal">
+                <div class="card__idx"><span>01</span></div>
+                <h3 class="card__title"><span class="idx">—</span>Fast&nbsp;Settlement</h3>
+                <p class="card__body">
+                    Transfers confirm in seconds on the Rialo network AgentPay runs against,
+                    keeping agent workflows synchronous: request → settle → continue.
+                </p>
+            </article>
+
+            <article class="card why-card card--tick reveal">
+                <div class="card__idx"><span>02</span></div>
+                <h3 class="card__title"><span class="idx">—</span>Programmable</h3>
+                <p class="card__body">
+                    Rialo hosts Venus on-chain programs. AgentPay already ships a deployed
+                    Venus escrow program and its readiness probe — that specific PDA-escrow path is
+                    gated behind an explicit operator cap. Agent policy-controlled payments are live via the hardened signer path.
+                </p>
+            </article>
+
+            <article class="card why-card card--tick reveal">
+                <div class="card__idx"><span>03</span></div>
+                <h3 class="card__title"><span class="idx">—</span>On-chain</h3>
+                <p class="card__body">
+                    Value moves through real signed transactions against persistent
+                    keypairs — not internal ledger rows that only the platform can see.
+                </p>
+            </article>
+
+            <article class="card why-card card--tick reveal">
+                <div class="card__idx"><span>04</span></div>
+                <h3 class="card__title"><span class="idx">—</span>Verifiable</h3>
+                <p class="card__body">
+                    Every payment returns its transaction signature, and network state is
+                    exposed through read-only probes — this page itself consumes them.
+                </p>
+            </article>
+        </div>
+
+    </div>
+</section>
+
+<!-- ================= 08 — USE CASES ================= -->
+
+<section class="section" id="usecases">
+    <div class="container">
+
+        <div class="sec-head reveal">
+            <p class="eyebrow"><span class="num">08</span>&nbsp;·&nbsp;Use&nbsp;Cases</p>
+            <h2 class="sec-title">What agents<br><span class="dim">will pay for.</span></h2>
+            <p class="sec-lede">
+                Product directions AgentPay is designed for. These are intended use cases,
+                not claims of current adoption volume.
+            </p>
+        </div>
+
+        <div class="reveal">
+            <div class="usecase">
+                <span class="usecase__num">U-01</span>
+                <div>
+                    <h3 class="usecase__title">AI Research Agents</h3>
+                    <p class="usecase__body">An agent that pays per result — unlocking datasets, unlocking a scraped document, or settling a micro-fee for a research API — and only continues when the source actually responds.</p>
+                </div>
+                <span class="usecase__tag">Pay-per-result</span>
+            </div>
+            <div class="usecase">
+                <span class="usecase__num">U-02</span>
+                <div>
+                    <h3 class="usecase__title">Autonomous Services</h3>
+                    <p class="usecase__body">Software that runs a business loop unattended: it uses its funded payment identity to pay for what it consumes, bounded by the policy its operator defined.</p>
+                </div>
+                <span class="usecase__tag">Self-sustaining</span>
+            </div>
+            <div class="usecase">
+                <span class="usecase__num">U-03</span>
+                <div>
+                    <h3 class="usecase__title">Agent-to-Agent Payments</h3>
+                    <p class="usecase__body">Machine-to-machine coordination: a paying agent settles with any Rialo recipient per completed task. The recipient can verify the settlement on-chain via the transaction signature.</p>
+                </div>
+                <span class="usecase__tag">Machine&nbsp;↔&nbsp;machine</span>
+            </div>
+            <div class="usecase">
+                <span class="usecase__num">U-04</span>
+                <div>
+                    <h3 class="usecase__title">Automated Treasury</h3>
+                    <p class="usecase__body">Funds that follow rules instead of approvals: distribution schedules, spending caps, and recipient allowlists enforced at the policy layer before any transaction is submitted.</p>
+                </div>
+                <span class="usecase__tag">Rule-bound</span>
+            </div>
+            <div class="usecase">
+                <span class="usecase__num">U-05</span>
+                <div>
+                    <h3 class="usecase__title">API · Compute Payments</h3>
+                    <p class="usecase__body">Metered machine services — GPU time, inference, data streams — paid per call with on-chain proof of what was spent, replacing subscription keys and monthly invoices.</p>
+                </div>
+                <span class="usecase__tag">Metered&nbsp;access</span>
+            </div>
+        </div>
+
+    </div>
+</section>
+
+<!-- ================= 09 — FAQ ================= -->
+
+<section class="section" id="faq">
+    <div class="container">
+
+        <div class="sec-head reveal">
+            <p class="eyebrow"><span class="num">09</span>&nbsp;·&nbsp;FAQ</p>
+            <h2 class="sec-title">What is real,<br><span class="dim">what is next.</span></h2>
+        </div>
+
+        <div class="faq reveal">
+
+            <div class="faq__item" data-open="false">
+                <button type="button" class="faq__q" aria-expanded="false">
+                    <span class="faq__qnum">Q-01</span>
+                    <span class="faq__qtext">What is AgentPay?</span>
+                    <span class="faq__icon" aria-hidden="true"></span>
+                </button>
+                <div class="faq__a"><div class="faq__a-inner">
+                    AgentPay is a payment layer for autonomous software. A human identity
+                    (verified by GitHub) gets a persistent Rialo wallet; agents
+                    created under that account each receive an isolated signing identity,
+                    and can initiate payments through AgentPay's API that
+                    settle on-chain. Today it runs on Rialo Testnet.
+                </div></div>
+            </div>
+
+            <div class="faq__item" data-open="false">
+                <button type="button" class="faq__q" aria-expanded="false">
+                    <span class="faq__qnum">Q-02</span>
+                    <span class="faq__qtext">How does the wallet work?</span>
+                    <span class="faq__icon" aria-hidden="true"></span>
+                </button>
+                <div class="faq__a"><div class="faq__a-inner">
+                    On first login, AgentPay provisions one Rialo keypair bound to your
+                    GitHub identity and stores it server-side with restricted file
+                    permissions. Your wallet address is visible at all times; your balance
+                    is read live from the Rialo RPC. If the RPC is down, the wallet shows
+                    an explicit "unavailable" state — it never invents a zero.
+                </div></div>
+            </div>
+
+            <div class="faq__item" data-open="false">
+                <button type="button" class="faq__q" aria-expanded="false">
+                    <span class="faq__qnum">Q-03</span>
+                    <span class="faq__qtext">How are payments settled?</span>
+                    <span class="faq__icon" aria-hidden="true"></span>
+                </button>
+                <div class="faq__a"><div class="faq__a-inner">
+                    Human payments: <code>POST /api/payment</code> validates the
+                    recipient and amount, pre-checks the balance, signs the transaction
+                    from your wallet, and returns the real transaction signature.
+                    Agent payments use a dedicated lane: <code>POST /api/agents/triggers/payments</code>
+                    enables autonomous credential-authenticated payments, while
+                    <code>POST /api/agents/{id}/payments</code> allows owner-initiated transfers. Both
+                    route through the hardened signer and produce signed on-chain transfers.
+                    A deployed Venus payment program exists for program-mediated settlement;
+                    that path stays disabled until an operator explicitly enables it with a spending cap.
+                </div></div>
+            </div>
+
+            <div class="faq__item" data-open="false">
+                <button type="button" class="faq__q" aria-expanded="false">
+                    <span class="faq__qnum">Q-04</span>
+                    <span class="faq__qtext">What is Rialo?</span>
+                    <span class="faq__icon" aria-hidden="true"></span>
+                </button>
+                <div class="faq__a"><div class="faq__a-inner">
+                    Rialo is the blockchain AgentPay settles on. It exposes a standard
+                    node RPC (block height, balances, transfers) and executes PolkaVM
+                    programs written in the Venus workflow language — the layer AgentPay's
+                    program-mediated payments target.
+                </div></div>
+            </div>
+
+            <div class="faq__item" data-open="false">
+                <button type="button" class="faq__q" aria-expanded="false">
+                    <span class="faq__qnum">Q-05</span>
+                    <span class="faq__qtext">Can agents pay automatically?</span>
+                    <span class="faq__icon" aria-hidden="true"></span>
+                </button>
+                <div class="faq__a"><div class="faq__a-inner">
+                    Agents can initiate real payments today through the documented
+                    API endpoints — owner-initiated via the session, or
+                    credential-authenticated via the trigger lane. Policy enforcement
+                    is live on every payment: lifecycle gate, recipient and action
+                    allow-lists, per-transaction and daily limits — all
+                    deny-by-default, checked before any transfer. Each agent has a
+                    distinct isolated signing identity, funded by its owner; there is no
+                    automatic funding path — a 0-balance agent stays
+                    INSUFFICIENT_FUNDS until funded.
+                </div></div>
+            </div>
+
+            <div class="faq__item" data-open="false">
+                <button type="button" class="faq__q" aria-expanded="false">
+                    <span class="faq__qnum">Q-06</span>
+                    <span class="faq__qtext">What is currently live?</span>
+                    <span class="faq__icon" aria-hidden="true"></span>
+                </button>
+                <div class="faq__a"><div class="faq__a-inner">
+                    GitHub identity and sessions, your persistent wallet, the Testnet
+                    faucet (your wallet), direct on-chain payments with returned signatures,
+                    agent payments with the full policy gate chain (owner- or
+                    credential-initiated), each agent's isolated signing identity,
+                    reconciliation, per-agent activity and owner statistics, the
+                    owner-scoped leaderboard, public verification with per-agent proof
+                    listings, and read-only health/program probes. The Live Network
+                    section on this page reports those states from real endpoints.
+                </div></div>
+            </div>
+
+            <div class="faq__item" data-open="false">
+                <button type="button" class="faq__q" aria-expanded="false">
+                    <span class="faq__qnum">Q-07</span>
+                    <span class="faq__qtext">What is still under development?</span>
+                    <span class="faq__icon" aria-hidden="true"></span>
+                </button>
+                <div class="faq__a"><div class="faq__a-inner">
+                    Program-mediated payments (built, deployed, and verified — but
+                    disabled behind the explicit operator safety cap); credential issuance
+                    remains an operator act through the store module (authentication,
+                    rotation, and revocation are enabled over the thresholded ops
+                    endpoint). A global public transaction feed is intentionally not
+                    implemented. The Leaderboard and Recent Activity sections on this page
+                    keep their honest empty states: the owner-scoped leaderboard and
+                    per-agent activity are live at /leaderboard.html and /activity.html,
+                    but a shared public feed does not exist — no placeholder agents,
+                    no sample transactions.
+                </div></div>
+            </div>
+
+        </div>
+
+    </div>
+</section>
+
+<!-- ================= 10 — FINAL CTA ================= -->
+
+<section class="finale">
+    <div class="container finale__grid">
+        <div class="finale__inner">
+            <p class="eyebrow reveal"><span class="num">10</span>&nbsp;·&nbsp;Start</p>
+            <h2 class="finale__title reveal">
+                Give your agents<br>
+                <span class="dim">an economic layer.</span>
+            </h2>
+            <p class="finale__sub reveal">
+                Log in with GitHub, get a wallet, fund it from the faucet, and let your agent
+                settle its first real payment on Rialo.
+            </p>
+            <div class="btn-row reveal">
+                <a class="btn btn--primary" href="/auth/github" id="launchAgentpay">
+                    Launch&nbsp;AgentPay <span class="arr">→</span>
+                </a>
+                <a class="btn btn--ghost" href="#architecture">
+                    Architecture <span class="arr">→</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- right balance panel — static product checklist, no fabricated data -->
+        <aside class="finale__panel reveal" aria-label="What you get today">
+            <div class="flowpanel__head">
+                <span class="label">Live&nbsp;Today&nbsp;on&nbsp;Testnet</span>
+                <span class="badge badge--lime">Verified&nbsp;Routes</span>
+            </div>
+            <ul class="finale__list">
+                <li><span class="finale__check">✓</span><div><strong>GitHub-verified identity</strong><small>OAuth session · /api/me</small></div></li>
+                <li><span class="finale__check">✓</span><div><strong>Persistent wallet</strong><small>Human owner keypair persists (Agents receive isolated signing identities via hardened signer)</small></div></li>
+                <li><span class="finale__check">✓</span><div><strong>Testnet faucet</strong><small>POST /api/faucet · 1 RLO</small></div></li>
+                <li><span class="finale__check">✓</span><div><strong>Direct on-chain payment</strong><small>POST /api/payment · signature returned</small></div></li>
+                <li><span class="finale__check">✓</span><div><strong>Agent wallets &amp; policy layer</strong><small>per-agent isolated signing identity · deny-by-default limits enforced on every payment</small></div></li>
+                <li><span class="finale__check">✓</span><div><strong>Public verification</strong><small>GET /api/public/verify · /api/public/agents/{id}/proofs</small></div></li>
+                <li><span class="finale__check">✓</span><div><strong>Read-only network probes</strong><small>GET /api/health · /api/program/status</small></div></li>
+                <li class="is-pending"><span class="finale__check">·</span><div><strong>Program-mediated payments</strong><small>built &amp; deployed — disabled behind operator safety cap</small></div></li>
+                <li class="is-pending"><span class="finale__check">·</span><div><strong>Credential lifecycle API · public feeds</strong><small>rotation &amp; revocation enabled · issuance not exposed over HTTP · no global feed</small></div></li>
+            </ul>
+        </aside>
+    </div>
+</section>
+
+</main>
+
+<!-- ================= FOOTER ================= -->
+
+<footer class="footer">
+    <div class="container footer__inner">
+        <a class="brand" href="/">
+            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
+        </a>
+        <div class="footer__meta">
+            <span>Payments&nbsp;for&nbsp;Autonomous&nbsp;Agents</span>
+            <span>Rialo&nbsp;Testnet</span>
+            <span>Real&nbsp;data&nbsp;only&nbsp;—&nbsp;or&nbsp;none</span>
+        </div>
+    </div>
+</footer>
+
+<script src="nav.js?v=6"></script>
+<script src="auth.js?v=5"></script>
+<script src="landing.js?v=3"></script>
+
+</body>
+</html>

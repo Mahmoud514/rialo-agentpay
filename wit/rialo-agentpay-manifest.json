@@ -1,0 +1,268 @@
+{
+  "version": "1.1",
+  "program_name": "rialo-agentpay",
+  "program_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "well_known_addresses": {
+    "system_program": "0000000000000000000000000000000000000000000000000000000000000000",
+    "subscriber_interface": "06a2ff24bca701c080b02a3db2f28da829f3187804e7e3a67f0d1e8e00000000",
+    "rex_registry": "061c6b0e25a3f635afc51b19ff92943764fca617a824b7ae5453024cc0000000",
+    "rex_processor": "061c6b0e2596b5ba8739cd426c7ba315ed8262db187f7a9b8483fcb150000000"
+  },
+  "pda_derivations": {
+    "workflow_pda": {
+      "seeds": [
+        {
+          "type": "literal",
+          "value": "rialo_workflow"
+        },
+        {
+          "type": "account_ref",
+          "account": "payer",
+          "field": "pubkey"
+        },
+        {
+          "type": "param",
+          "name": "workflow_pda_slug"
+        }
+      ],
+      "program_id": "program_id"
+    },
+    "subscription_pda": {
+      "seeds": [
+        {
+          "type": "literal",
+          "value": "rialo_subscribe"
+        },
+        {
+          "type": "account_ref",
+          "account": "payer",
+          "field": "pubkey"
+        },
+        {
+          "type": "derived",
+          "value": "multi_account_slug(workflow_pda, 0, account_index)"
+        }
+      ],
+      "program_id": "subscriber_interface"
+    },
+    "rex_pda": {
+      "seeds": [
+        {
+          "type": "literal",
+          "value": "rex_info"
+        },
+        {
+          "type": "account_ref",
+          "account": "payer",
+          "field": "pubkey"
+        },
+        {
+          "type": "derived",
+          "value": "multi_account_slug(workflow_pda, 0, account_index)"
+        }
+      ],
+      "program_id": "rex_registry"
+    },
+    "event_data_pda": {
+      "seeds": [
+        {
+          "type": "literal",
+          "value": "rex_report"
+        },
+        {
+          "type": "account_ref",
+          "account": "payer",
+          "field": "pubkey"
+        },
+        {
+          "type": "derived",
+          "value": "multi_account_slug(workflow_pda, branch_number, rex_account_index)"
+        }
+      ],
+      "program_id": "rex_processor"
+    }
+  },
+  "instructions": {
+    "execute": {
+      "discriminant": 0,
+      "parameters": [
+        {
+          "name": "workflow_pda_slug",
+          "type": "nonce",
+          "description": "[u8; 32] - Unique identifier for this workflow instance"
+        },
+        {
+          "name": "recipient",
+          "type": "pubkey",
+          "description": "User-provided pubkey"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "source": "parameter",
+          "is_signer": true,
+          "is_writable": true,
+          "description": "The account that pays for rent and signs the transaction"
+        },
+        {
+          "name": "workflow_pda",
+          "source": "derived",
+          "derivation": "workflow_pda",
+          "is_signer": false,
+          "is_writable": true,
+          "owner": "program_id",
+          "min_data_size": 256,
+          "description": "PDA that stores workflow state"
+        },
+        {
+          "name": "system_program",
+          "source": "well_known",
+          "well_known": "system_program",
+          "is_signer": false,
+          "is_writable": false,
+          "is_executable": true,
+          "description": "Solana system program"
+        },
+        {
+          "name": "subscriber_interface",
+          "source": "well_known",
+          "well_known": "subscriber_interface",
+          "is_signer": false,
+          "is_writable": false,
+          "is_executable": true,
+          "description": "Rialo subscriber interface program"
+        },
+        {
+          "name": "recipient",
+          "source": "parameter",
+          "parameter": "recipient",
+          "is_signer": false,
+          "is_writable": true,
+          "description": "Account from parameter 'recipient'"
+        }
+      ],
+      "serialization": {
+        "format": "bincode",
+        "enum_variant": 0,
+        "fields": [
+          {
+            "name": "workflow_pda_slug",
+            "type": "bytes32"
+          },
+          {
+            "name": "recipient",
+            "type": "bytes32"
+          }
+        ]
+      }
+    },
+    "start": {
+      "discriminant": 1,
+      "parameters": [
+        {
+          "name": "workflow_pda_slug",
+          "type": "nonce",
+          "description": "[u8; 32] - Unique identifier for this workflow instance"
+        },
+        {
+          "name": "amount",
+          "type": "u64",
+          "description": "User-provided u64"
+        },
+        {
+          "name": "recipient",
+          "type": "pubkey",
+          "description": "User-provided pubkey"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "source": "parameter",
+          "is_signer": true,
+          "is_writable": true,
+          "description": "The account that pays for rent and signs the transaction"
+        },
+        {
+          "name": "workflow_pda",
+          "source": "derived",
+          "derivation": "workflow_pda",
+          "is_signer": false,
+          "is_writable": true,
+          "owner": "program_id",
+          "min_data_size": 256,
+          "description": "PDA that stores workflow state"
+        },
+        {
+          "name": "system_program",
+          "source": "well_known",
+          "well_known": "system_program",
+          "is_signer": false,
+          "is_writable": false,
+          "is_executable": true,
+          "description": "Solana system program"
+        },
+        {
+          "name": "subscriber_interface",
+          "source": "well_known",
+          "well_known": "subscriber_interface",
+          "is_signer": false,
+          "is_writable": false,
+          "is_executable": true,
+          "description": "Rialo subscriber interface program"
+        }
+      ],
+      "serialization": {
+        "format": "bincode",
+        "enum_variant": 1,
+        "fields": [
+          {
+            "name": "workflow_pda_slug",
+            "type": "bytes32"
+          },
+          {
+            "name": "amount",
+            "type": "u64_le"
+          },
+          {
+            "name": "recipient",
+            "type": "bytes32"
+          }
+        ]
+      }
+    }
+  },
+  "callbacks": {},
+  "workflow_state": {
+    "initialization": {
+      "discriminator": "first_8_bytes",
+      "discriminator_value": "0000000000000000",
+      "description": "Workflow is uninitialized if first 8 bytes are zero"
+    },
+    "structure": [
+      {
+        "name": "discriminator",
+        "type": "u64",
+        "offset": 0
+      },
+      {
+        "name": "amount",
+        "type": "u64",
+        "offset": 8
+      },
+      {
+        "name": "recipient",
+        "type": "bytes",
+        "offset": 16
+      },
+      {
+        "name": "executed",
+        "type": "bool",
+        "offset": 48
+      }
+    ],
+    "min_size": 256
+  },
+  "test_scenarios": {}
+}

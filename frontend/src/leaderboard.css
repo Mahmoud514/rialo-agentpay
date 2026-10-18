@@ -1,0 +1,202 @@
+/* ==========================================================================
+   RIALO AGENTPAY — PHASE 7 REAL LEADERBOARD (leaderboard.html extra styles)
+   Extends the shared AgentPay visual language (landing.css tokens,
+   app.css layout, dashboard.css anatomy). No second system: every color,
+   radius, spacing step, and mono font comes from the existing token set.
+   Board rows are render-only — server order is authoritative and is
+   visualized left-to-right, top-to-bottom, exactly as supplied.
+   ========================================================================== */
+
+/* visually-hidden helper (no .sr-only ships in the shared sheets) */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* --------------------------------------------------------------------------
+   TABLE WRAP — horizontal scroll INSIDE the card on narrow viewports
+   (the page/grid itself never overflows; this is the one sanctioned
+   containment so the 12-column board stays readable above 560px).
+   -------------------------------------------------------------------------- */
+.lb-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 calc(-1 * var(--s-3));
+    padding: 0 var(--s-3);
+}
+
+.lb-table {
+    width: 100%;
+    min-width: 940px;              /* keep columns legible; scroll below */
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.lb-table thead th {
+    position: sticky;
+    top: var(--nav-h);
+    z-index: 2;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line-strong);
+    padding: var(--s-3) var(--s-3);
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+.lb-table tbody td {
+    padding: var(--s-3);
+    border-bottom: 1px solid var(--line);
+    color: var(--text-2);
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.lb-table tbody tr:last-child td { border-bottom: none; }
+
+.lb-table tbody tr:hover td {
+    background: rgba(var(--lime-rgb), 0.025);
+}
+
+/* rank column: tight, mono, podium tones for the top 3 only
+   (podium is pure presentation of the server's top 3 — the server
+   ranks; we only tint the first three supplied positions). */
+.lb-rank { width: 52px; }
+.lb-rank__num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    height: 26px;
+    padding: 0 5px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line-strong);
+    background: var(--bg-raise);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-3);
+}
+tr.is-gold   .lb-rank__num { border-color: rgba(var(--lime-rgb), 0.55); color: var(--lime); background: rgba(var(--lime-rgb), 0.07); }
+tr.is-silver .lb-rank__num { border-color: rgba(255, 255, 255, 0.35); color: var(--text-2); }
+tr.is-bronze .lb-rank__num { border-color: rgba(251, 191, 36, 0.4); color: var(--amber); }
+
+/* agent cell: name + short ID under it (the full ID is in the title) */
+.lb-agent { min-width: 170px; }
+.lb-agent__name {
+    display: block;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.25;
+}
+.lb-agent__id {
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+}
+
+/* numeric columns right-align; volume is the headline metric */
+.lb-num { text-align: right; font-variant-numeric: tabular-nums; }
+.lb-num--vol { color: var(--text); font-weight: 600; }
+.lb-num--vol .unit {
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    color: var(--text-3);
+    margin-left: 3px;
+}
+tr.is-gold .lb-num--vol { color: var(--lime); }
+
+.subtle { color: var(--text-3); }
+
+/* lifecycle chip — mirrors the agents-page status colors */
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line-strong);
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-2);
+    background: var(--bg-raise);
+}
+.chip::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+}
+.chip--ok   { color: var(--lime);  border-color: rgba(var(--lime-rgb), 0.4); }
+.chip--warn { color: var(--amber); border-color: rgba(251, 191, 36, 0.35); }
+.chip--bad  { color: var(--red);   border-color: rgba(248, 113, 113, 0.35); }
+.chip--neutral { color: var(--cyan); border-color: rgba(103, 232, 249, 0.3); }
+
+/* last-confirmed cell: local time, UTC instant in title */
+.lb-time { color: var(--text-2); font-size: 12px; }
+.lb-time--has { cursor: help; }
+
+/* actions column */
+.lb-actions { text-align: right; width: 1%; }
+.lb-activity-link { white-space: nowrap; }
+
+/* server-order note under the board */
+.lb-order-note { margin-top: var(--s-4); }
+.lb-order-note .mono { color: var(--text-2); }
+
+/* error / retry strip inside the unavailable state */
+.lb-error-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    margin-top: var(--s-4);
+}
+.lb-error-code { margin-top: var(--s-3); color: var(--red); }
+
+/* --------------------------------------------------------------------------
+   RESPONSIVE — follows the project's existing breakpoint scale
+   (1024 / 760 / 560 / 420 from app.css & landing.css).
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 760px) {
+    /* the table becomes the one scrollable object; header cells tighten */
+    .lb-wrap { margin: 0 calc(-1 * var(--s-4)); padding: 0 var(--s-4); }
+    .lb-table thead th { top: 48px; font-size: 9px; }
+    .lb-table tbody td { padding: var(--s-3) 10px; }
+    .lb-agent__name { max-width: 180px; }
+    .lb-error-actions .wallet-btn { width: 100%; }
+}
+
+@media (max-width: 560px) {
+    .lb-table { min-width: 860px; font-size: 12px; }
+    .lb-rank { width: 44px; }
+    .lb-agent { min-width: 150px; }
+    .lb-agent__name { max-width: 150px; font-size: 12.5px; }
+}
+
+/* reduced motion: kill the status dot pulse (shared pattern from
+   landing.css's reduced-motion rule; keep the board static-calm) */
+@media (prefers-reduced-motion: reduce) {
+    .status--on .status__dot { animation: none; }
+}

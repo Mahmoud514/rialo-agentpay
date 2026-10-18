@@ -1,0 +1,31 @@
+[package]
+name = "agentpay-signer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "PHASE 9 isolated signer (STEP 3 skeleton): loopback-only, deny-by-default signer process boundary. Signing NOT implemented in this step."
+
+# Isolated workspace: never joins the AgentPay server build graph
+# (same discipline as tools/latch-transport-shim, tools/repair-deploy,
+# tools/deploy-testnet). The signer is a SEPARATE TRUST DOMAIN by
+# architecture (see _phase9/isolated_signer_architecture_decision.md §12):
+# it must not compile into — or be compiled by — the app's build graph.
+[workspace]
+
+[dependencies]
+# Version/features mirror the parent lock exactly so the build uses the
+# local cargo cache and nothing else (offline discipline of the shim).
+tokio = { version = "1.53", features = ["rt-multi-thread", "net", "io-util", "macros", "time"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.26", features = ["v4"] }
+getrandom = "0.2"
+# The repository's established Rialo key representation (0.18.1 — the exact
+# crates the I-1 auth vault uses, resolved from the same local cargo cache).
+rialo-s-keypair = { version = "0.18.1", default-features = false }
+rialo-s-signer = { version = "0.18.1", default-features = false }
+# ed25519 signature verification (strict) — the rialo wire type the repo already uses
+rialo-s-signature = { version = "0.18.1", default-features = false, features = ["verify"] }
+# canonical bytes binding hash (blake3, as the SDK's own message-hash family)
+blake3 = "1"
+base64 = "0.22"
