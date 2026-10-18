@@ -583,14 +583,74 @@ impl RialoConfig {
     }
 
     /// Chain connectivity probe. Ok(height) when the RPC answers.
+    ///
+    /// G21.12.40 — CLI-less fallback: the deployed runtime image does NOT
+    /// ship the `rialo` CLI (Dockerfile: only rust-built server + frontend),
+    /// so the historical CLI-only probe classified a healthy endpoint as
+    /// RIALO_RPC_UNAVAILABLE. Order is now: CLI probe first (full fidelity
+    /// when the CLI exists — local dev, signer hosts), then a raw
+    /// JSON-RPC `getBlockHeight` on the ONE configured endpoint using the
+    /// established read-only plumbing (`rpc_request_body` positional-array
+    /// params — the wire shape the endpoint 400s without). Both lanes are
+    /// strictly read-only; neither fabricates a height.
     pub fn health(&self) -> Result<u64, RialoError> {
-        let value = self.run(Operation::Read, &["client", "get-block-height"])?;
-        value
-            .get("block_height")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| {
-                RialoError::plain("RIALO_ERROR", "block height missing in RPC response".into())
-            })
+        match self.run(Operation::Read, &["client", "get-block-height"]) {
+            Ok(value) => value
+                .get("block_height")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    RialoError::plain("RIALO_ERROR", "block height missing in RPC response".into())
+                }),
+            // CLI unavailable/failed → raw JSON-RPC fallback (same endpoint,
+            // same read-only discipline). Scalar result on this method: the
+            // reply is `{"result": <u64>}` (object-params probes return
+            // -32602, verified live against testnet).
+            Err(cli_err) => {
+                let body = rpc_request_body("getBlockHeight", &serde_json::Value::Array(vec![]));
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(8))
+                    .build()
+                    .map_err(|e| {
+                        RialoError::plain("RIALO_RPC_UNAVAILABLE", format!("http client: {e}"))
+                    })?;
+                let response = client
+                    .post(&self.rpc_url)
+                    .header("Content-Type", "application/json")
+                    .body(serde_json::to_string(&body).unwrap_or_default())
+                    .send()
+                    .map_err(|e| {
+                        RialoError::plain(
+                            "RIALO_RPC_UNAVAILABLE",
+                            format!("network error: {e} | cli also failed: {}", cli_err.detail),
+                        )
+                    })?;
+                let status = response.status();
+                let parsed: Value = response.json().map_err(|e| {
+                    RialoError::plain(
+                        "RIALO_RPC_UNAVAILABLE",
+                        format!("unparseable RPC reply: {e}"),
+                    )
+                })?;
+                if !status.is_success() {
+                    return Err(RialoError::plain(
+                        "RIALO_RPC_UNAVAILABLE",
+                        format!("RPC returned {status}"),
+                    ));
+                }
+                if let Some(err) = jsonrpc_error(&parsed) {
+                    return Err(RialoError::plain(
+                        "RIALO_ERROR",
+                        err.get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("rpc error")
+                            .to_string(),
+                    ));
+                }
+                parsed.get("result").and_then(Value::as_u64).ok_or_else(|| {
+                    RialoError::plain("RIALO_ERROR", "block height missing in RPC response".into())
+                })
+            }
+        }
     }
 
     /// Balance in RLO. Err — never a fake zero — when the RPC is down.
@@ -1976,6 +2036,76 @@ mod manifest_guard_tests {
 #[cfg(test)]
 mod classification_tests {
     use super::*;
+
+    /// G21.12.40: serve one canned JSON-RPC reply on a loopback port and
+    /// return (url, join-handle). Asserts the request body the app sends
+    /// (positional-array params) before answering.
+    fn serve_one_jsonrpc(reply: &'static str) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = vec![0u8; 65536];
+            let n = stream.read(&mut buf).expect("read");
+            let body = String::from_utf8_lossy(&buf[..n]).to_string();
+            // Assert the app's wire shape: positional-array params envelope.
+            assert!(
+                body.contains("\"params\":[[]]") || body.contains("\"params\": []"),
+                "fallback must send positional-array params (rpc_request_body shape), got: {body}"
+            );
+            assert!(
+                body.contains("\"getBlockHeight\""),
+                "method must be getBlockHeight"
+            );
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                reply.len(),
+                reply
+            );
+            stream.write_all(resp.as_bytes()).expect("write");
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    fn cfg_with(cli: &str, rpc_url: &str) -> RialoConfig {
+        RialoConfig {
+            cli: std::path::PathBuf::from(cli),
+            rpc_url: rpc_url.to_string(),
+            program_id: None,
+            program_dir: std::path::PathBuf::from("artifact"),
+        }
+    }
+
+    #[test]
+    fn health_falls_back_to_raw_rpc_when_cli_missing() {
+        let (url, server) = serve_one_jsonrpc("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":1834571}");
+        // definitely-missing CLI path → run() errors → raw fallback lane.
+        let cfg = cfg_with("/nonexistent/rialo-binary-g21", &url);
+        let h = cfg.health().expect("raw fallback must succeed");
+        assert_eq!(h, 1834571, "height must come from the real RPC reply");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn health_fallback_fails_closed_on_rpc_error() {
+        // RPC-level error object must NOT fabricate a height.
+        let (url, server) = serve_one_jsonrpc(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"method not found\"}}",
+        );
+        let cfg = cfg_with("/nonexistent/rialo-binary-g21", &url);
+        let err = cfg.health().expect_err("rpc error must propagate");
+        assert_eq!(err.code, "RIALO_ERROR");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn health_fallback_fails_closed_on_dead_endpoint() {
+        // Dead port: classified RIALO_RPC_UNAVAILABLE — never a fake success.
+        let cfg = cfg_with("/nonexistent/rialo-binary-g21", "http://127.0.0.1:9");
+        let err = cfg.health().expect_err("dead endpoint must fail");
+        assert_eq!(err.code, "RIALO_RPC_UNAVAILABLE");
+    }
 
     #[test]
     fn transfer_confirmation_timeout_is_dedicated_code() {
