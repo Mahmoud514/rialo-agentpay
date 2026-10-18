@@ -605,8 +605,19 @@ impl RialoConfig {
             // same read-only discipline). Scalar result on this method: the
             // reply is `{"result": <u64>}` (object-params probes return
             // -32602, verified live against testnet).
+            //
+            // G21.12.46 — verified-live wire shape: the endpoint rejects the
+            // generic `rpc_request_body` envelope (`"params": [[]]` → HTTP
+            // 400 -32602 "expected struct RequestBlockHeightConfig") and
+            // accepts TOP-LEVEL `"params": []` (HTTP 200 scalar). Build the
+            // request inline with exactly `"params": []`.
             Err(cli_err) => {
-                let body = rpc_request_body("getBlockHeight", &serde_json::Value::Array(vec![]));
+                let body = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getBlockHeight",
+                    "params": [],
+                });
                 let client = reqwest::blocking::Client::builder()
                     .timeout(std::time::Duration::from_secs(8))
                     .build()
@@ -2038,8 +2049,9 @@ mod classification_tests {
     use super::*;
 
     /// G21.12.40: serve one canned JSON-RPC reply on a loopback port and
-    /// return (url, join-handle). Asserts the request body the app sends
-    /// (positional-array params) before answering.
+    /// return (url, join-handle). G21.12.46: captures the request body and
+    /// asserts the VERIFIED-LIVE wire shape — exactly top-level
+    /// `"params": []` (the endpoint 400s on a nested `[[]]`).
     fn serve_one_jsonrpc(reply: &'static str) -> (String, std::thread::JoinHandle<()>) {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -2049,10 +2061,16 @@ mod classification_tests {
             let mut buf = vec![0u8; 65536];
             let n = stream.read(&mut buf).expect("read");
             let body = String::from_utf8_lossy(&buf[..n]).to_string();
-            // Assert the app's wire shape: positional-array params envelope.
+            // G21.12.46 — exact wire shape regression guard: params must be
+            // a top-level EMPTY array; nesting (`[[]]`) is the live-verified
+            // -32602 failure mode.
             assert!(
-                body.contains("\"params\":[[]]") || body.contains("\"params\": []"),
-                "fallback must send positional-array params (rpc_request_body shape), got: {body}"
+                body.contains("\"params\":[]"),
+                "health fallback must send exactly \"params\":[] (no nesting), got: {body}"
+            );
+            assert!(
+                !body.contains("\"params\":[[]]"),
+                "params must NOT be nested ([[]] is the live-verified -32602 rejection), got: {body}"
             );
             assert!(
                 body.contains("\"getBlockHeight\""),
