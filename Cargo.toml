@@ -31,6 +31,25 @@ default-features = false
 features = ["runtime", "with-uuid-1", "with-serde_json-1"]
 optional = true
 
+# TLS for production PostgreSQL (Neon requires TLS). tokio-postgres's raw
+# rustls integration; certificate verification via webpki roots. Local
+# plaintext (embedded test postgres / CI localhost) stays on NoTls — the
+# connector is chosen per-URL from sslmode (see pg_store::tls_connector).
+[dependencies.tokio-postgres-rustls]
+version = "0.14"
+default-features = false
+optional = true
+
+[dependencies.rustls]
+version = "0.23"
+default-features = false
+features = ["std", "ring", "logging", "tls12"]
+optional = true
+
+[dependencies.webpki-roots]
+version = "0.26"
+optional = true
+
 [dependencies.postgresql_embedded]
 version = "=0.20.0"
 default-features = false
@@ -61,6 +80,9 @@ server = [
     "dep:uuid","dep:blake3", "dep:rialo-s-signature",
     "dep:tokio-postgres",
     "dep:postgresql_embedded",
+    "dep:tokio-postgres-rustls",
+    "dep:rustls",
+    "dep:webpki-roots",
     ]
 
 [dependencies.axum]

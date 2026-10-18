@@ -81,6 +81,103 @@ pub fn pg_is_authoritative() -> bool {
 
 use tokio_postgres::NoTls;
 
+// --- G21.12.38: TLS connector selection --------------------------------------
+// Production hosts (Neon) REQUIRE TLS; local test postgres (embedded/CI
+// localhost) is plaintext. The connector is chosen per-URL from `sslmode`:
+//   sslmode=disable/allow/prefer  -> NoTls (explicit plaintext)
+//   no sslmode, loopback host     -> NoTls (legacy local test URLs)
+//   sslmode=require/verify-ca/verify-full or any remote postgres:// host
+//                                 -> rustls with webpki root verification
+// Never logs the URL. Error chains print cause-by-cause, no credentials.
+pub(crate) fn url_wants_tls(url: &str) -> bool {
+    for kv in url.split(&['?', '&'][..]) {
+        if let Some(v) = kv.strip_prefix("sslmode=") {
+            return !matches!(v, "disable" | "allow" | "prefer");
+        }
+    }
+    if let Some(rest) = url
+        .strip_prefix("postgres://")
+        .or_else(|| url.strip_prefix("postgresql://"))
+    {
+        // strip userinfo (everything through the LAST '@'), then the path
+        // and query — what remains starts with host[:port].
+        let after_user = rest.rsplit('@').next().unwrap_or(rest);
+        let host_port = after_user.split(['/', '?']).next().unwrap_or("");
+        // IPv6 literals arrive bracketed ([::1]:5432): split on the LAST
+        // colon only when a bracket is present, else on the FIRST colon.
+        let host = if host_port.starts_with('[') {
+            host_port
+                .split(']')
+                .next()
+                .unwrap_or("")
+                .trim_start_matches('[')
+        } else {
+            host_port.split(':').next().unwrap_or("")
+        };
+        return !(host.is_empty() || matches!(host, "127.0.0.1" | "localhost" | "::1"));
+    }
+    for kv in url.split_whitespace() {
+        if let Some(v) = kv.strip_prefix("host=") {
+            return !matches!(v, "127.0.0.1" | "localhost" | "::1");
+        }
+    }
+    false
+}
+
+/// Build the rustls TLS connector (webpki roots, no client cert). Fails
+/// CLOSED: any setup error aborts connect rather than downgrading to
+/// plaintext.
+pub(crate) fn make_rustls_connector() -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    Ok(tokio_postgres_rustls::MakeRustlsConnect::new(config))
+}
+
+/// Single production connect entry point. Chooses NoTls vs rustls from the
+/// URL (sslmode + host), spawns the connection driver on the current
+/// runtime, and returns the ready Client. Failures carry the full cause
+/// chain and NEVER the URL.
+pub(crate) async fn pg_connect(url: &str) -> Result<tokio_postgres::Client, String> {
+    if url_wants_tls(url) {
+        let tls = make_rustls_connector()?;
+        let (client, conn) = tokio_postgres::connect(url, tls)
+            .await
+            .map_err(|e| format!("pg connect: {}", pg_error_chain(&e)))?;
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                eprintln!("[pg] connection error: {}", pg_error_chain(&e));
+            }
+        });
+        Ok(client)
+    } else {
+        let (client, conn) = tokio_postgres::connect(url, NoTls)
+            .await
+            .map_err(|e| format!("pg connect: {}", pg_error_chain(&e)))?;
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                eprintln!("[pg] connection error: {}", pg_error_chain(&e));
+            }
+        });
+        Ok(client)
+    }
+}
+
+/// Format a tokio_postgres error WITH its full cause chain (no URL/creds).
+pub(crate) fn pg_error_chain(e: &tokio_postgres::Error) -> String {
+    let mut out = e.to_string();
+    let mut src = std::error::Error::source(e);
+    while let Some(cause) = src {
+        out.push_str(" | cause: ");
+        out.push_str(&cause.to_string());
+        src = cause.source();
+    }
+    out
+}
+// ----------------------------------------------------------------------------
+
 /// Pool handle. Cheap to clone.
 #[derive(Clone)]
 pub struct Pg {
@@ -115,14 +212,14 @@ pub fn init_blocking(runtime: &tokio::runtime::Handle) -> Result<Pg, String> {
 /// client + one driver connection spawned on THIS runtime, main handle
 /// captured for the sync-core dispatches.
 pub async fn init_async(url: String) -> Result<Pg, String> {
-    let (client, conn) = match tokio_postgres::connect(&url, NoTls).await {
+    let client = match pg_connect(&url).await {
         Ok(p) => {
-            eprintln!("[pg] connect ok");
+            eprintln!("[pg] connect ok (tls={})", url_wants_tls(&url));
             p
         }
         Err(e) => {
             eprintln!("[pg] connect ERR: {e}");
-            return Err(format!("pg connect: {e}"));
+            return Err(e);
         }
     };
     eprintln!("[pg] running migrations");
@@ -144,22 +241,12 @@ pub async fn init_async(url: String) -> Result<Pg, String> {
     }
     eprintln!("[pg] opening global second connection");
     let global_conn_url = database_url().expect("DATABASE_URL present");
-    let (gclient, gconn) = tokio_postgres::connect(&global_conn_url, NoTls)
+    let gclient = pg_connect(&global_conn_url)
         .await
         .map_err(|e| format!("pg global connect: {e}"))?;
-    tokio::spawn(async move {
-        if let Err(e) = gconn.await {
-            eprintln!("[pg] global connection error: {e}");
-        }
-    });
     let _ = global_client_set(gclient);
     let main_h = tokio::runtime::Handle::current();
     let _ = set_main_handle(main_h);
-    tokio::spawn(async move {
-        if let Err(e) = conn.await {
-            eprintln!("[pg] connection error: {e}");
-        }
-    });
     Ok(Pg {
         client: std::sync::Arc::new(client),
     })
@@ -198,15 +285,10 @@ pub fn bootstrap_thread(url: String) {
             }
         };
         let init_res = rt.block_on(async {
-            let (client, conn) = match tokio_postgres::connect(&url, NoTls).await {
+            let client = match pg_connect(&url).await {
                 Ok(p) => p,
-                Err(e) => return Err(format!("pg connect: {e}")),
+                Err(e) => return Err(e),
             };
-            tokio::spawn(async move {
-                if let Err(e) = conn.await {
-                    eprintln!("[pg] connection error: {e}");
-                }
-            });
             eprintln!("[pg] running migrations");
             run_migrations(&client).await?;
             eprintln!("[pg] migrations done");
@@ -224,15 +306,10 @@ pub fn bootstrap_thread(url: String) {
                     .map_err(|e| format!("legacy import auth keys: {e}"))?;
                 eprintln!("[pg] legacy import: {n} auth key row(s) loaded");
             }
-            let (gclient, gconn) = match tokio_postgres::connect(&url, NoTls).await {
+            let gclient = match pg_connect(&url).await {
                 Ok(p) => p,
-                Err(e) => return Err(format!("pg global connect: {e}")),
+                Err(e) => return Err(format!("pg global: {e}")),
             };
-            tokio::spawn(async move {
-                if let Err(e) = gconn.await {
-                    eprintln!("[pg] global connection error: {e}");
-                }
-            });
             let _ = global_client_set(gclient);
             let main_h = tokio::runtime::Handle::current();
             let _ = set_main_handle(main_h);
@@ -283,9 +360,9 @@ pub fn wait_ready() {
 
 fn blocking_init_inner(runtime: &tokio::runtime::Handle, url: String) -> Result<Pg, String> {
     let result: Result<Pg, String> = runtime.block_on(async {
-        let (client, conn) = match tokio_postgres::connect(&url, NoTls).await {
+        let client = match pg_connect(&url).await {
             Ok(pair) => pair,
-            Err(e) => return Err(format!("pg connect: {e}")),
+            Err(e) => return Err(e),
         };
         run_migrations(&client).await?;
         // GATE 2 — legacy import: BEFORE any authoritative read, pull the
@@ -313,24 +390,13 @@ fn blocking_init_inner(runtime: &tokio::runtime::Handle, url: String) -> Result<
         // and transaction() needs &mut). Open a second connection from the
         // same DATABASE_URL — still a 2-connection footprint, Neon-friendly.
         let global_conn_url = database_url().expect("DATABASE_URL present");
-        let (gclient, gconn) = tokio_postgres::connect(&global_conn_url, NoTls)
+        let gclient = pg_connect(&global_conn_url)
             .await
             .map_err(|e| format!("pg global connect: {e}"))?;
-        runtime.spawn(async move {
-            if let Err(e) = gconn.await {
-                eprintln!("[pg] global connection error: {e}");
-            }
-        });
         let _ = global_client_set(gclient);
         // Capture the MAIN runtime handle for the sync-core PG dispatches.
         let main_h = tokio::runtime::Handle::current();
         let _ = set_main_handle(main_h);
-        // spawn the connection driver on the runtime
-        runtime.spawn(async move {
-            if let Err(e) = conn.await {
-                eprintln!("[pg] connection error: {e}");
-            }
-        });
         Ok(Pg {
             client: std::sync::Arc::new(client),
         })
@@ -3615,6 +3681,75 @@ impl Pg {
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod storage_mode_tests {
+
+    // ── G21.12.38: TLS connector selection (production Neon safety) ──
+    #[test]
+    fn tls_wants_remote_postgres_url_by_default() {
+        // Neon-style host without sslmode: TLS REQUIRED (safe default)
+        assert!(url_wants_tls(
+            "postgres://u:pw@ep-cool-name-123.eu-central-1.aws.neon.tech/neondb?channel_binding=require"
+        ));
+        assert!(url_wants_tls(
+            "postgresql://u:pw@some.remote.host.example:5432/db"
+        ));
+    }
+
+    #[test]
+    fn tls_wants_explicit_sslmode_require() {
+        assert!(url_wants_tls(
+            "host=ep-x.neon.tech port=5432 sslmode=require"
+        ));
+        assert!(url_wants_tls(
+            "postgres://u:pw@h.example/db?sslmode=verify-full"
+        ));
+        assert!(url_wants_tls(
+            "postgres://u:pw@h.example/db?sslmode=verify-ca"
+        ));
+    }
+
+    #[test]
+    fn no_tls_for_local_plaintext() {
+        assert!(!url_wants_tls("postgres://u:pw@127.0.0.1:59999/db"));
+        assert!(!url_wants_tls("postgresql://u:pw@localhost/db"));
+        assert!(!url_wants_tls("host=127.0.0.1 port=5432 user=u dbname=d"));
+        assert!(!url_wants_tls("host=localhost port=5432 user=u dbname=d"));
+        assert!(!url_wants_tls(
+            "postgres://u:pw@h.example/db?sslmode=disable"
+        ));
+    }
+
+    #[test]
+    fn rustls_connector_builds_with_roots() {
+        let mk = make_rustls_connector();
+        assert!(
+            mk.is_ok(),
+            "rustls connector must build (webpki roots present)"
+        );
+    }
+
+    #[test]
+    fn error_chain_includes_causes_without_url() {
+        // dead port -> connect error with IO cause chain; assert chain marks
+        // and NO connection-string leakage anywhere in the formatted text.
+        let url = "host=127.0.0.1 port=9 user=nobody dbname=nothing connect_timeout=1";
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt");
+        let err = match rt
+            .block_on(async { tokio_postgres::connect(url, tokio_postgres::NoTls).await })
+        {
+            Ok(_) => panic!("dead port must fail"),
+            Err(e) => e,
+        };
+        let chain = pg_error_chain(&err);
+        assert!(
+            chain.contains(" | cause: "),
+            "cause chain must be present: {chain}"
+        );
+        assert!(!chain.contains("password"), "no creds in error text");
+    }
+
     use super::*;
 
     #[test]
