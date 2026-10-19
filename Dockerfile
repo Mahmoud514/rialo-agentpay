@@ -25,6 +25,20 @@ COPY wit/ wit/
 # Exact CI feature flag + lockfile. Release in the final image.
 RUN cargo +nightly build --release --features server --bin server --locked
 
+# ----------------------------------------------------------- rialo CLI ------
+# G21 — vendored Rialo CLI 0.18.1 (linux-amd64). The runtime image previously
+# shipped WITHOUT the CLI, which made every CLI-backed money path (direct
+# payment transfer, faucet airdrop) fail with RIALO_CLI_UNAVAILABLE → 502.
+# Provenance + pinned checksum: vendor/RIALO_CLI_PROVENANCE.md; the build
+# HARD-FAILS on any checksum mismatch (supply-chain pin, not a greeting).
+COPY vendor/binaries-stable-0.18.1-linux-amd64.tar.gz /tmp/rialo-cli.tar.gz
+RUN echo "652c94e14d0744f617988199515bbad1977fe40390b0a998928c1e2bb7e6af69  /tmp/rialo-cli.tar.gz" \
+      | sha256sum -c - \
+    && mkdir -p /opt/rialo-cli \
+    && tar -xzf /tmp/rialo-cli.tar.gz -C /opt/rialo-cli --strip-components=1 bin/rialo \
+    && chmod 0755 /opt/rialo-cli/rialo \
+    && rm /tmp/rialo-cli.tar.gz
+
 # --------------------------------------------------------------- runtime ---
 FROM debian:trixie-slim AS runtime
 
@@ -37,6 +51,15 @@ RUN useradd --system --create-home --home-dir /app --uid 10001 agentpay
 WORKDIR /app
 
 COPY --from=builder /build/target/release/server /app/server
+
+# G21 — the pinned rialo CLI (built in the builder stage from the vendored,
+# checksum-verified 0.18.1 vendor bundle). Server resolves the CLI from PATH
+# (RialoConfig.cli defaults to `rialo`), so a symlink into /usr/local/bin
+# makes every CLI-backed money path work without code changes.
+COPY --from=builder /opt/rialo-cli/rialo /opt/rialo-cli/rialo
+RUN chmod 0755 /opt/rialo-cli/rialo \
+    && ln -s /opt/rialo-cli/rialo /usr/local/bin/rialo \
+    && /usr/local/bin/rialo --version
 
 # Static frontend is served by the same process (ServeDir; no build step).
 COPY frontend/src/ /app/frontend/src/

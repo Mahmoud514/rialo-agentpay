@@ -57,3 +57,6 @@ scripts/run-testnet-e2e.sh
 *.log
 /cookie_test_*.txt
 /tmp/
+
+# Vendored CLI bundle stays OUT of git; CI fetches the pinned sha256 from a release asset
+vendor/*.tar.gz
