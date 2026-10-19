@@ -26,13 +26,18 @@ COPY wit/ wit/
 RUN cargo +nightly build --release --features server --bin server --locked
 
 # ----------------------------------------------------------- rialo CLI ------
-# G21 — vendored Rialo CLI 0.18.1 (linux-amd64). The runtime image previously
-# shipped WITHOUT the CLI, which made every CLI-backed money path (direct
-# payment transfer, faucet airdrop) fail with RIALO_CLI_UNAVAILABLE → 502.
-# Provenance + pinned checksum: vendor/RIALO_CLI_PROVENANCE.md; the build
-# HARD-FAILS on any checksum mismatch (supply-chain pin, not a greeting).
-COPY vendor/binaries-stable-0.18.1-linux-amd64.tar.gz /tmp/rialo-cli.tar.gz
-RUN echo "652c94e14d0744f617988199515bbad1977fe40390b0a998928c1e2bb7e6af69  /tmp/rialo-cli.tar.gz" \
+# G21 — pinned Rialo CLI 0.18.1 (linux-amd64), fetched at build time from the
+# repository's own pinned GitHub Release asset (public, operator-controlled).
+# The runtime image previously shipped WITHOUT the CLI, which made every
+# CLI-backed money path (direct payment transfer, faucet airdrop) fail with
+# RIALO_CLI_UNAVAILABLE → 502. Build-time integrity: hard `sha256sum -c`
+# gate against the pinned digest — any tamper/absence fails the build.
+# (Provenance notes: vendor/RIALO_CLI_PROVENANCE.md.)
+# rust:slim ships wget but not curl → use wget (already installed by the
+# base image's own toolchain install step) + coreutils tar/sha256sum.
+ARG RIALO_CLI_RELEASE_URL=https://github.com/Mahmoud514/rialo-agentpay/releases/download/rialo-cli-0.18.1/binaries-stable-0.18.1-linux-amd64.tar.gz
+RUN wget -qO /tmp/rialo-cli.tar.gz "$RIALO_CLI_RELEASE_URL" \
+    && echo "652c94e14d0744f617988199515bbad1977fe40390b0a998928c1e2bb7e6af69  /tmp/rialo-cli.tar.gz" \
       | sha256sum -c - \
     && mkdir -p /opt/rialo-cli \
     && tar -xzf /tmp/rialo-cli.tar.gz -C /opt/rialo-cli --strip-components=1 bin/rialo \
