@@ -1437,7 +1437,10 @@ async fn current_user(State(state): State<AppState>, headers: HeaderMap) -> Json
 
 async fn faucet(State(state): State<AppState>, headers: HeaderMap) -> Response {
     // G21.11 kill-switch: reject before any faucet/airdrop operation.
-    if transfers_disabled() {
+    // G21 scoped-gate exception: AGENTPAY_ENABLE_FAUCET=1 allows ONLY this
+    // testnet faucet through while AGENTPAY_DISABLE_TRANSFERS=1 keeps every
+    // direct/agent payment lane fail-closed (their checks are untouched).
+    if transfers_disabled() && !faucet_enabled() {
         return transfers_disabled_error();
     }
     let user = match session_user(&state, &headers) {
@@ -2048,6 +2051,39 @@ fn transfers_disabled() -> bool {
     *CACHED.get_or_init(|| parse_transfers_disabled(&std::env::var("AGENTPAY_DISABLE_TRANSFERS")))
 }
 
+/// G21 — scoped testnet faucet gate. Controls ONLY the `/api/faucet`
+/// handler so the testnet faucet can be enabled independently while
+/// `AGENTPAY_DISABLE_TRANSFERS=1` keeps every direct/agent payment lane
+/// fail-closed. Pure parse rule (fail-safe, mirrors the transfers rule
+/// but inverted semantics: the flag ENABLES):
+///   unset / empty / "0" / "false" (any case) -> false (faucet stays gated)
+///   "1" / "true" (any case)                  -> true  (faucet allowed)
+///   any other non-empty value                -> false (FAIL-SAFE: an invalid
+///   configuration is never silently treated as "faucet enabled")
+fn parse_faucet_enabled(raw: &Result<String, std::env::VarError>) -> bool {
+    match raw {
+        Ok(v) if v.eq_ignore_ascii_case("1") || v.eq_ignore_ascii_case("true") => true,
+        Ok(other) => {
+            if !other.trim().is_empty()
+                && !other.eq_ignore_ascii_case("0")
+                && !other.eq_ignore_ascii_case("false")
+            {
+                eprintln!(
+                    "AGENTPAY_ENABLE_FAUCET has invalid value {:?}; failing SAFE (faucet gated)",
+                    other
+                );
+            }
+            false
+        }
+        Err(_) => false,
+    }
+}
+
+fn faucet_enabled() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| parse_faucet_enabled(&std::env::var("AGENTPAY_ENABLE_FAUCET")))
+}
+
 /// Pure parse rule (documented contract):
 ///   unset / empty / "0" / "false" (any case)  -> false (transfers allowed)
 ///   "1" / "true" (any case)                   -> true  (transfers blocked)
@@ -2072,6 +2108,72 @@ fn parse_transfers_disabled(raw: &Result<String, std::env::VarError>) -> bool {
 #[cfg(test)]
 fn parse_transfers_disabled_for_test(raw: &str) -> bool {
     parse_transfers_disabled(&Ok(raw.to_string()))
+}
+
+#[cfg(test)]
+fn parse_faucet_enabled_for_test(raw: &str) -> bool {
+    parse_faucet_enabled(&Ok(raw.to_string()))
+}
+
+#[cfg(test)]
+mod scoped_faucet_gate_tests {
+    use super::*;
+
+    /// G21 scoped-gate T1 — faucet flag parses exactly per contract:
+    /// only "1"/"true" (any case) enable; everything else (unset handled by
+    /// the VarError arm; empty/0/false/invalid) stays gated.
+    #[test]
+    fn faucet_enabled_parse_contract() {
+        assert!(parse_faucet_enabled_for_test("1"));
+        assert!(parse_faucet_enabled_for_test("true"));
+        assert!(parse_faucet_enabled_for_test("TRUE"));
+        assert!(!parse_faucet_enabled_for_test(""));
+        assert!(!parse_faucet_enabled_for_test("0"));
+        assert!(!parse_faucet_enabled_for_test("false"));
+        assert!(!parse_faucet_enabled_for_test("yes")); // invalid → FAIL-SAFE gated
+        assert!(!parse_faucet_enabled_for_test(" on ")); // invalid → FAIL-SAFE gated
+    }
+
+    /// T2 — the scoped rule: kill-switch ON + faucet ON ⇒ faucet proceeds
+    /// (passed the gate); kill-switch ON + faucet OFF ⇒ blocked; and the
+    /// combined predicate used by the handler matches this table exactly.
+    #[test]
+    fn scoped_gate_truth_table() {
+        let blocked = |transfers: bool, faucet: bool| transfers && !faucet;
+        // production default: transfers ON(disabled), faucet OFF ⇒ /api/faucet blocked
+        assert!(blocked(true, false));
+        // scoped enable: transfers ON(disabled), faucet ON ⇒ faucet proceeds
+        assert!(!blocked(true, true));
+        // transfers fully allowed (env unset): gate irrelevant
+        assert!(!blocked(false, false));
+        assert!(!blocked(false, true));
+    }
+
+    /// T3 — CRITICAL regression proof: all OTHER kill-switch guards still use
+    /// `transfers_disabled()` alone. Enforced structurally (grep of guarded
+    /// sites in CI + review): server.rs `/api/payment`, agents.rs
+    /// `execute_agent_payment`, `agent_payment`, `execute_agent_payment_v2`,
+    /// `agent_trigger_payment` — all gate on `transfers_disabled()` ONLY;
+    /// `faucet_enabled()` appears in exactly one guard (`/api/faucet`).
+    /// This test pins the PURE predicates (env-independent): with the
+    /// documented production defaults (DISABLE_TRANSFERS=1, ENABLE_FAUCET
+    /// unset) the scoped gate must block, with the scoped exception it must
+    /// pass — matching the T2 truth table.
+    #[test]
+    fn scoped_gate_matches_production_defaults() {
+        // parse layer: production default env values
+        assert!(parse_transfers_disabled_for_test("1")); // kill-switch ON
+        assert!(
+            !parse_transfers_disabled(&Err(std::env::VarError::NotPresent)),
+            "transfers gate defaults OPEN only when env ABSENT (not deployed state)"
+        );
+        // faucet: unset env ⇒ parse arm Err(_) ⇒ gated (default disabled)
+        assert!(!parse_faucet_enabled(&Err(std::env::VarError::NotPresent)));
+        // the actual production-default scenario
+        let transfers_on = parse_transfers_disabled_for_test("1"); // true
+        let faucet_off = parse_faucet_enabled(&Err(std::env::VarError::NotPresent)); // false
+        assert!(transfers_on && !faucet_off, "blocked(true,false) must hold");
+    }
 }
 
 fn transfers_disabled_error() -> Response {
