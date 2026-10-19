@@ -3285,7 +3285,18 @@ mod cli_diag_tests {
         /// Materialize the shim as an executable file (bash script), like a
         /// real CLI binary. Returns (config, tempdir-path-to-clean).
         fn arm(&self) -> (RialoConfig, std::path::PathBuf) {
-            let dir = std::env::temp_dir().join(format!("g25-shim-{}", std::process::id()));
+            // G28 — per-call unique dir: PID-only keys made concurrent CI
+            // tests race on one shared shim file (cross-script overwrite).
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "g25-shim-{}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
             std::fs::create_dir_all(&dir).unwrap();
             let path = dir.join("rialo");
             {
