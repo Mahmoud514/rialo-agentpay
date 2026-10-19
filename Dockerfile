@@ -7,6 +7,13 @@ FROM rust:1.91-slim AS builder
 
 WORKDIR /build
 
+# G21 — wget is absent in rust:*-slim (proven: /bin/sh: 1: wget: not found,
+# exit 127, docker-build run 39251171237). Install it upfront so the pinned
+# CLI fetch step below works; lists cleaned afterwards per base-image habit.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN rustup toolchain install nightly --profile minimal
 
 # Dependency-cache layer: manifests only.
@@ -33,8 +40,6 @@ RUN cargo +nightly build --release --features server --bin server --locked
 # RIALO_CLI_UNAVAILABLE → 502. Build-time integrity: hard `sha256sum -c`
 # gate against the pinned digest — any tamper/absence fails the build.
 # (Provenance notes: vendor/RIALO_CLI_PROVENANCE.md.)
-# rust:slim ships wget but not curl → use wget (already installed by the
-# base image's own toolchain install step) + coreutils tar/sha256sum.
 ARG RIALO_CLI_RELEASE_URL=https://github.com/Mahmoud514/rialo-agentpay/releases/download/rialo-cli-0.18.1/binaries-stable-0.18.1-linux-amd64.tar.gz
 RUN wget -qO /tmp/rialo-cli.tar.gz "$RIALO_CLI_RELEASE_URL" \
     && echo "652c94e14d0744f617988199515bbad1977fe40390b0a998928c1e2bb7e6af69  /tmp/rialo-cli.tar.gz" \
