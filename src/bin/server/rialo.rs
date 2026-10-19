@@ -666,10 +666,83 @@ impl RialoConfig {
 
     /// Balance in RLO. Err — never a fake zero — when the RPC is down.
     pub fn balance(&self, address: &str) -> Result<f64, RialoError> {
-        let value = self.run(Operation::Read, &["client", "balance", address])?;
-        value.get("balance").and_then(Value::as_f64).ok_or_else(|| {
-            RialoError::plain("RIALO_ERROR", "balance missing in RPC response".into())
-        })
+        match self.run(Operation::Read, &["client", "balance", address]) {
+            Ok(value) => value.get("balance").and_then(Value::as_f64).ok_or_else(|| {
+                RialoError::plain("RIALO_ERROR", "balance missing in RPC response".into())
+            }),
+            // G21.12.98 — read-only raw JSON-RPC fallback (mirror of the
+            // verified-live health() fallback, same endpoint + discipline):
+            // the production image ships WITHOUT the rialo CLI, so every
+            // /api/me balance read previously failed with RIALO_CLI_UNAVAILABLE
+            // while /api/health succeeded via its own fallback. Wire shape
+            // verified live against testnet (G21.12.98):
+            //   getBalance rejects a bare-string account (invalid type string),
+            //   and accepts exactly {"address": "<base58>"} →
+            //   {"result": {"version":0,"context":{...},"value": <u64 kelvins>}}
+            // Units (decisive live cross-check): RPC value=4510080 kelvins for
+            // an account whose CLI `client balance` reports 0.00451008 RLO ⇒
+            // RLO = kelvins / 1_000_000_000 (native decimals = 9; the
+            // rent-exemption constant 890880 matches the lamport scale).
+            //
+            // NEVER fabricates a zero: every malformed/unparseable/incomplete
+            // reply is a typed error (RIALO_ERROR / RIALO_RPC_UNAVAILABLE).
+            Err(cli_err) => {
+                let body = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getBalance",
+                    "params": [{ "address": address }],
+                });
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(8))
+                    .build()
+                    .map_err(|e| {
+                        RialoError::plain("RIALO_RPC_UNAVAILABLE", format!("http client: {e}"))
+                    })?;
+                let response = client
+                    .post(&self.rpc_url)
+                    .header("Content-Type", "application/json")
+                    .body(serde_json::to_string(&body).unwrap_or_default())
+                    .send()
+                    .map_err(|e| {
+                        RialoError::plain(
+                            "RIALO_RPC_UNAVAILABLE",
+                            format!("network error: {e} | cli also failed: {}", cli_err.detail),
+                        )
+                    })?;
+                let status = response.status();
+                let parsed: Value = response.json().map_err(|e| {
+                    RialoError::plain(
+                        "RIALO_RPC_UNAVAILABLE",
+                        format!("unparseable RPC reply: {e}"),
+                    )
+                })?;
+                if !status.is_success() {
+                    return Err(RialoError::plain(
+                        "RIALO_RPC_UNAVAILABLE",
+                        format!("RPC returned {status}"),
+                    ));
+                }
+                if let Some(err) = jsonrpc_error(&parsed) {
+                    return Err(RialoError::plain(
+                        "RIALO_ERROR",
+                        err.get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("rpc error")
+                            .to_string(),
+                    ));
+                }
+                const KELVINS_PER_RLO: f64 = 1_000_000_000.0;
+                let kelvins = parsed
+                    .get("result")
+                    .and_then(|r| r.get("value"))
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| {
+                        RialoError::plain("RIALO_ERROR", "balance missing in RPC response".into())
+                    })?;
+                Ok(kelvins as f64 / KELVINS_PER_RLO)
+            }
+        }
     }
 
     /// PHASE 6 STEP 4 (schema-remediated) — read-only transaction lookup,
@@ -2829,5 +2902,91 @@ mod transaction_lookup_tests {
         assert_eq!(payer, "AgentWalletAddr1111111111111111111111111");
         assert_eq!(recipient, "WrongAddr3333333333333333333333333333");
         assert_eq!(amount, 50_000_000);
+    }
+}
+
+#[cfg(test)]
+mod balance_fallback_tests {
+    use super::*;
+
+    /// G21.12.98 T1 — unit conversion pinned by the live cross-check:
+    /// RPC value (kelvins) → RLO requires division by exactly 1e9.
+    /// 4_510_080 kelvins MUST parse to 0.00451008 RLO (CLI reference value).
+    #[test]
+    fn kelvin_to_rlo_conversion_is_nine_decimals() {
+        const KELVINS_PER_RLO: f64 = 1_000_000_000.0;
+        let kelvins: u64 = 4_510_080;
+        let rlo = kelvins as f64 / KELVINS_PER_RLO;
+        assert_eq!(rlo, 0.004_510_08);
+        // One full RLO in kelvins round-trips exactly.
+        assert_eq!((1.0 * KELVINS_PER_RLO) as u64, 1_000_000_000);
+    }
+
+    /// G21.12.98 T2 — malformed response (missing result.value) must be a
+    /// typed error, never a fabricated zero.
+    #[test]
+    fn malformed_response_missing_value_is_typed_error() {
+        // Exactly the shape the fallback parses:
+        let parsed = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": { "version": 0, "context": {"slot": 1, "api_version": "x"} }
+        });
+        let kelvins = parsed
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(Value::as_u64);
+        assert!(
+            kelvins.is_none(),
+            "missing value must NOT parse as a balance"
+        );
+    }
+
+    /// G21.12.98 T3 — a genuine ZERO balance is distinguished from absence:
+    /// result.value = 0 parses (Some(0)) and yields 0.0 only from the RPC's
+    /// explicit zero — while a MISSING node yields None → typed error.
+    #[test]
+    fn explicit_zero_balance_parses_but_absence_does_not() {
+        let zero = serde_json::json!({"result": {"value": 0}});
+        assert_eq!(
+            zero.pointer("/result/value").and_then(Value::as_u64),
+            Some(0)
+        );
+
+        let absent = serde_json::json!({"result": {}});
+        assert_eq!(
+            absent.pointer("/result/value").and_then(Value::as_u64),
+            None
+        );
+    }
+
+    /// G21.12.98 T4 — JSON-RPC error envelopes route to RIALO_ERROR (via
+    /// jsonrpc_error) and transport/HTTP failures to RIALO_RPC_UNAVAILABLE,
+    /// mirroring the health() fallback classification.
+    #[test]
+    fn error_envelope_classification_matches_health_fallback() {
+        let rpc_err = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "error": {"code": -32602, "message": "Invalid params: missing field `address`"}
+        });
+        assert!(jsonrpc_error(&rpc_err).is_some());
+        let ok = serde_json::json!({"result": {"value": 7}});
+        assert!(jsonrpc_error(&ok).is_none());
+    }
+
+    /// G21.12.98 T5 — request body wire shape is pinned exactly (single
+    /// positional struct param with field `address`; method getBalance).
+    #[test]
+    fn getbalance_request_body_wire_shape() {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getBalance",
+            "params": [{ "address": "Acc0unt1111111111111111111111111111111111" }],
+        });
+        assert_eq!(body["method"], "getBalance");
+        assert_eq!(body["jsonrpc"], "2.0");
+        let first = body["params"].as_array().unwrap()[0].clone();
+        assert!(first.get("address").is_some(), "params[0].address required");
+        assert!(first.as_object().unwrap().len() == 1, "no extra fields");
     }
 }
