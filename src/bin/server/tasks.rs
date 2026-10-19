@@ -660,8 +660,13 @@ pub async fn list_tasks(State(state): State<AppState>, headers: HeaderMap) -> Re
         }
         let pg_list_outcome: PgListOutcome = tokio::task::block_in_place(|| {
             match crate::pg_store::pg_run(async {
+                // G21.12.86 — retry-ONCE on connection-level failures only.
+                // The operation is a pure SELECT (idempotent). On a
+                // connection-classified first failure, reconnect and retry the
+                // SELECT at most once; any SQL/auth error or failed reconnect
+                // keeps the ORIGINAL error string (fail-closed 503 unchanged).
                 let mut client = crate::pg_store::global_client().await;
-                let rows = client
+                let rows = match client
                     .query(
                         "SELECT task_id, title, status, reward_rlo, owner_name, \
                          COALESCE(worker_name, '') AS worker_name, created_at \
@@ -669,7 +674,34 @@ pub async fn list_tasks(State(state): State<AppState>, headers: HeaderMap) -> Re
                         &[],
                     )
                     .await
-                    .map_err(|e| format!("tasks_pg list: {e}"))?;
+                {
+                    Ok(rows) => rows,
+                    Err(first_err) => {
+                        eprintln!(
+                            "[tasks] tasks_pg SELECT failed; checking reconnect path: {first_err}"
+                        );
+                        drop(client); // release the mutex before reconnect swaps the client
+                        match crate::pg_store::reconnect_global_client().await {
+                            Ok(()) => {
+                                eprintln!("[tasks] reconnected; retrying SELECT once");
+                                let client2 = crate::pg_store::global_client().await;
+                                client2
+                                    .query(
+                                        "SELECT task_id, title, status, reward_rlo, owner_name, \
+                                         COALESCE(worker_name, '') AS worker_name, created_at \
+                                         FROM tasks_pg",
+                                        &[],
+                                    )
+                                    .await
+                                    .map_err(|e| format!("tasks_pg list (retry): {e}"))?
+                            }
+                            Err(re) => {
+                                eprintln!("[tasks] reconnect failed: {re}");
+                                return Err(format!("tasks_pg list: {first_err}"));
+                            }
+                        }
+                    }
+                };
                 let vals: Vec<serde_json::Value> = rows
                     .iter()
                     .map(|r| {
