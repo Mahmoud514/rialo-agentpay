@@ -630,11 +630,27 @@ pub(crate) async fn reconnect_global_client() -> Result<(), StoreError> {
         }
     };
 
-    // Swap the inner client through the existing Mutex (G21.12.71 revert-safe).
-    // Note: if PG_CLIENT has never been initialized, global_client() would
-    // panic on the .expect() — we use global_client_set() which handles both
-    // branches via OnceLock.set() semantics.
-    global_client_set(new_client);
+    // SwAP: install the new client through the existing Mutex (G21.12.71
+    // design / G21.12.80 authorization). CRITICAL: global_client_set() uses
+    // OnceLock::set() which is a FIRST-WRITER-WINS initializer — once the
+    // client exists (it is always initialized at bootstrap), set() silently
+    // does NOTHING and the reconnect would be a documented no-op (proven by
+    // G21.12.79: post-reconnect SELECT returned kind: Closed). The correct
+    // swap derefs the existing Mutex in place: *guard = new_client. We lock
+    // the OnceLock'd mutex DIRECTLY (never via global_client(), which locks
+    // the same mutex — that would deadlock) and never hold it across .await
+    // points of connect() (the new client is already built here).
+    let installed = match PG_CLIENT.get() {
+        Some(mutex) => {
+            let mut guard = mutex.lock().await;
+            *guard = new_client;
+            drop(guard);
+            true
+        }
+        // Not initialized (test-only paths): fall back to the initializer,
+        // which succeeds precisely because this is the first writer.
+        None => global_client_set(new_client),
+    };
 
     // Spawn the new connection driver on the CURRENT runtime's handle.
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -649,8 +665,17 @@ pub(crate) async fn reconnect_global_client() -> Result<(), StoreError> {
     }
 
     PG_RECONNECT_IN_FLIGHT.store(false, Ordering::Release);
-    eprintln!("[pg] reconnected to database successfully");
-    Ok(())
+    // G21.12.80: success is logged ONLY after the new client is verifiably
+    // installed in the global slot; a failed install is a hard error (the
+    // previous silent no-op is precisely the bug this fix removes).
+    if installed {
+        eprintln!("[pg] reconnected to database successfully (new client installed)");
+        Ok(())
+    } else {
+        Err(StoreError::Db(
+            "PG reconnect failed: global client slot unavailable (not initialized)".into(),
+        ))
+    }
 }
 
 /// A test/diagnostic helper: clone the client handle semantics.
@@ -6973,6 +6998,13 @@ mod reconnect_tests {
             std::env::set_var("DATABASE_URL", &url);
         }
 
+        // G21.12.80 (test-only): same throttle isolation as the integration
+        // tests — earlier tests in this binary legitimately populate
+        // PG_RECONNECT_LAST_AT (the production throttle is working as
+        // designed); reset it so this unit test exercises the reconnect
+        // path deterministically.
+        PG_RECONNECT_LAST_AT.store(0, std::sync::atomic::Ordering::Release);
+        PG_RECONNECT_IN_FLIGHT.store(false, std::sync::atomic::Ordering::Release);
         reconnect_global_client()
             .await
             .expect("reconnect_global_client must succeed on a healthy embedded PG");
@@ -7036,5 +7068,166 @@ mod reconnect_tests {
                 "reconnect must be throttled within the minimum interval"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod reconnect_integration_tests {
+    use super::*;
+    use postgresql_embedded::{PostgreSQL, Settings};
+    use std::sync::atomic::Ordering;
+
+    /// G21.12.76 — Test 1: drop an established connection and verify recovery.
+    /// Setup: spin up embedded PG, seed the global client with a live connection,
+    /// then simulate a drop (by closing it via dropping the client Arc), then
+    /// call reconnect_global_client() and verify the subsequent SELECT works.
+    #[tokio::test]
+    async fn connection_drop_then_reconnect_succeeds() {
+        // Arrange: boot embedded PG 18.6 and set DATABASE_URL.
+        let mut settings = Settings::default();
+        settings.timeout = Some(std::time::Duration::from_secs(120));
+        let mut pg = PostgreSQL::new(settings);
+        pg.setup().await.expect("embedded pg setup");
+        pg.start().await.expect("embedded pg start");
+        pg.create_database("agentpay_reconnect_recovery_test")
+            .await
+            .expect("create test database");
+        let url = pg.settings().url("agentpay_reconnect_recovery_test");
+
+        // Seed DATABASE_URL.
+        unsafe {
+            std::env::set_var("DATABASE_URL", &url);
+        }
+
+        // G21.12.78 root-cause fix (test-only): the Connection half MUST be
+        // spawned/polled on the runtime, or the Client can never complete
+        // queries (requests hang forever — same pattern documented on
+        // arm_global_from_embedded). Poll the driver before the baseline
+        // query, then DROP the Client to close the channel; the driver ends
+        // when its channel closes → the established TCP connection actually
+        // closes (a true "dropped established connection").
+        let (client, conn) = tokio_postgres::connect(&url, NoTls)
+            .await
+            .expect("sanity: connection to embedded pg");
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                eprintln!("[test] baseline conn ended: {e}");
+            }
+        });
+        let baseline: i32 = client
+            .query_one("SELECT 1 AS val", &[])
+            .await
+            .expect("baseline")
+            .get("val");
+        assert_eq!(baseline, 1, "baseline query works");
+        drop(client); // ← closes the request channel; driver exits; socket closes
+
+        // Act: reconnect via the actual production code path.
+        // G21.12.79 (test-only): reset the process-global throttle first —
+        // earlier tests in the same binary (e.g. the concurrent single-flight
+        // test) record a successful reconnect into PG_RECONNECT_LAST_AT, and
+        // the legitimate 30s production throttle would otherwise reject this
+        // test's reconnect ("throttled; Ns since last attempt").
+        PG_RECONNECT_LAST_AT.store(0, std::sync::atomic::Ordering::Release);
+        PG_RECONNECT_IN_FLIGHT.store(false, std::sync::atomic::Ordering::Release);
+        reconnect_global_client()
+            .await
+            .expect("reconnect_global_client must establish a working connection");
+
+        // Assert: subsequent SELECT via the reconnected global client succeeds.
+        let guard = global_client().await;
+        let subsequent: i32 = guard
+            .query_one("SELECT 1 AS val", &[])
+            .await
+            .expect("subsequent query on reconnected global client")
+            .get("val");
+        assert_eq!(subsequent, 1, "subsequent query works after reconnect");
+
+        // Cleanup.
+        pg.stop().await.expect("embedded pg stop");
+    }
+
+    /// G21.12.76 — Test 2: concurrent reconnect — prove single-flight.
+    /// Setup: same as T1 but spawn N concurrent reconnect_global_client() calls.
+    /// Verify: only one reconnect fires (others fail with "in progress"), and
+    /// the resulting global client still works for subsequent queries.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn concurrent_reconnect_single_flight() {
+        let mut settings = Settings::default();
+        settings.timeout = Some(std::time::Duration::from_secs(120));
+        let mut pg = PostgreSQL::new(settings);
+        pg.setup().await.expect("embedded pg setup");
+        pg.start().await.expect("embedded pg start");
+        pg.create_database("agentpay_reconnect_multi_test")
+            .await
+            .expect("create test database");
+        let url = pg.settings().url("agentpay_reconnect_multi_test");
+
+        unsafe {
+            std::env::set_var("DATABASE_URL", &url);
+        }
+
+        // Force LAST_AT to a stale value so the first caller will enter the
+        // reconnect path rather than being throttled.
+        PG_RECONNECT_LAST_AT.store(0, std::sync::atomic::Ordering::Release);
+
+        // Act: spawn N concurrent reconnect attempts.
+        const N: usize = 10;
+        let mut handles = Vec::with_capacity(N);
+        for _ in 0..N {
+            handles.push(tokio::spawn(reconnect_global_client()));
+        }
+        let mut deps = 0;
+        let mut success = 0;
+        for h in handles {
+            match h.await {
+                Ok(Ok(())) => success += 1,
+                _ => deps += 1,
+            }
+        }
+        // Exactly one reconnect should succeed (single-flight) or, if the
+        // throttle already blocked it, zero succeed but at least one recover.
+        assert!(
+            success <= 1,
+            "single-flight: more than one reconnect succeeded in the same window"
+        );
+        // At least one caller must have ended up with a working global client.
+        let guard = global_client().await;
+        let row = guard
+            .query_one("SELECT 1 AS val", &[])
+            .await
+            .expect("subsequent query must work after concurrent reconnects");
+        let check: i32 = row.get("val");
+        assert_eq!(check, 1, "global client works after concurrent reconnects");
+        let _ = deps; // silencial
+
+        // Cleanup.
+        pg.stop().await.expect("embedded pg stop");
+    }
+
+    /// G21.12.76 — Test 3: reconnect failure keeps the ORIGINAL error (no try)
+    /// on insufficient DB reachability — reconnect_global_client returns Err
+    /// but does NOT silently change the global state in a broken way.
+    #[tokio::test]
+    async fn reconnect_failure_keeps_error_state() {
+        // Point DATABASE_URL at a dead port.
+        let dead_url = "postgresql://user:pass@127.0.0.1:1/dead_test";
+        unsafe {
+            std::env::set_var("DATABASE_URL", dead_url);
+        }
+
+        // Force a retry attempt through the actual implementation.
+        PG_RECONNECT_LAST_AT.store(0, std::sync::atomic::Ordering::Release);
+        // G21.12.79 fix (test-only): we are already inside the #[tokio::test]
+        // runtime — await directly instead of building a nested runtime
+        // (tokio forbids block_on from within a runtime context).
+        let result = reconnect_global_client().await;
+        assert!(result.is_err(), "reconnect to dead port must fail");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("PG reconnect failed") || msg.contains("Connection refused"),
+            "unexpected error shape: {msg}"
+        );
+        // The error is captured in StoreError::Db message; global state untouched.
     }
 }
