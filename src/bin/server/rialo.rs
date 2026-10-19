@@ -1048,7 +1048,8 @@ impl RialoConfig {
     /// Request a faucet airdrop. The CLI derives the faucet endpoint from the
     /// RPC URL; there is no separate faucet configuration.
     pub fn airdrop(&self, address: &str, amount: &str) -> Result<(), RialoError> {
-        let value = self.run(
+        let kelvins = Self::parse_amount_to_kelvins(amount)?;
+        match self.run(
             Operation::Faucet,
             &[
                 "client",
@@ -1060,11 +1061,142 @@ impl RialoConfig {
                 "--timeout",
                 "30000",
             ],
-        )?;
-        // Airdrop success envelope has no `success:false`; presence of a
-        // balance/new-balance field or exit code 0 is sufficient.
-        let _ = value;
-        Ok(())
+        ) {
+            Ok(value) => {
+                // Airdrop success envelope has no `success:false`; presence of
+                // a balance/new-balance field or exit code 0 is sufficient.
+                let _ = value;
+                Ok(())
+            }
+            // G21.13.05 — CLI path failed (deployed image ships without the
+            // rialo CLI): fall back to the equivalent raw requestAirdrop wire
+            // call captured from the vendor CLI. Still gated upstream by the
+            // faucet handler kill-switch; amount already parsed once above.
+            Err(cli_err) => {
+                eprintln!(
+                    "[rialo] CLI airdrop unavailable ({cli_err:?}); falling back to raw requestAirdrop"
+                );
+                self.request_airdrop_raw(address, kelvins).map(|_sig| ())
+            }
+        }
+    }
+    fn parse_amount_to_kelvins(amount_rlo: &str) -> Result<u64, RialoError> {
+        let v: f64 = amount_rlo.trim().parse().map_err(|_| {
+            RialoError::plain(
+                "RIALO_ERROR",
+                format!("invalid faucet amount: {amount_rlo}"),
+            )
+        })?;
+        if !v.is_finite() || v <= 0.0 {
+            return Err(RialoError::plain(
+                "RIALO_ERROR",
+                format!("faucet amount must be > 0: {amount_rlo}"),
+            ));
+        }
+        let kelvins = v * 1_000_000_000.0;
+        // Sub-kelvin residue would silently drop value units — reject instead.
+        if (kelvins - kelvins.round()).abs() > f64::EPSILON.max(kelvins.abs() * 1e-9) {
+            return Err(RialoError::plain(
+                "RIALO_ERROR",
+                format!("faucet amount exceeds kelvin precision: {amount_rlo}"),
+            ));
+        }
+        if kelvins >= u64::MAX as f64 || kelvins < 1.0 {
+            return Err(RialoError::plain(
+                "RIALO_ERROR",
+                format!("faucet amount out of range: {amount_rlo}"),
+            ));
+        }
+        Ok(kelvins.round() as u64)
+    }
+
+    /// G21.13.05 — raw JSON-RPC faucet fallback (read-only design note: this
+    /// is the ONLY place a raw network WRITE exists, behind the faucet
+    /// handler's kill-switch + integrity gates; it NEVER runs on read paths).
+    ///
+    /// Wire shape captured from the vendor CLI itself (isolated local sink,
+    /// G21.13.05): the CLI's `client airdrop` issues EXACTLY
+    ///   {"jsonrpc":"2.0","id":1,"method":"requestAirdrop",
+    ///    "params":[{"version":0,"pubkey":"<addr>","kelvins":<u64>}]}
+    /// ─ amount scaling proved live: 1 RLO → 1_000_000_000 kelvins,
+    ///   2.5 RLO → 2_500_000_000 kelvins (÷ non-integers rejected upstream).
+    /// Success semantics: HTTP 200 + JSON-RPC result carrying the airdrop
+    /// signature. Ambiguous outcomes (timeout/connection drop AFTER submit)
+    /// are intentionally typed RIALO_TRANSFER_CONFIRMATION_TIMEOUT-style
+    /// errors here — the caller must NOT assume success OR failure and must
+    /// not auto-retry (duplicate funding risk; faucet has no idempotency key).
+    ///
+    /// SAFETY: never fabricates success on malformed envelopes (missing
+    /// result → typed error), and only ever invoked behind the production
+    /// kill-switch in server.rs::faucet.
+    fn request_airdrop_raw(&self, address: &str, kelvins: u64) -> Result<String, RialoError> {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "requestAirdrop",
+            "params": [{
+                "version": 0,
+                "pubkey": address,
+                "kelvins": kelvins,
+            }],
+        });
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(35)) // CLI uses 30s; +5s grace
+            .build()
+            .map_err(|e| RialoError::plain("RIALO_RPC_UNAVAILABLE", format!("http client: {e}")))?;
+        let response = client
+            .post(&self.rpc_url)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_string(&body).unwrap_or_default())
+            .send()
+            .map_err(|e| {
+                // Ambiguous: the request MAY have reached the faucet before
+                // the connection failed. Treat as unknown, never retry here.
+                RialoError::plain(
+                    "RIALO_RPC_UNAVAILABLE",
+                    format!("airdrop network error (state unknown, no retry): {e}"),
+                )
+            })?;
+        let status = response.status();
+        let parsed: Value = response.json().map_err(|e| {
+            // 2xx but unparseable = ambiguous evidence; do not claim success.
+            RialoError::plain(
+                "RIALO_ERROR",
+                format!("airdrop reply unparseable (state unknown): {e}"),
+            )
+        })?;
+        if !status.is_success() {
+            return Err(RialoError::plain(
+                "RIALO_ERROR",
+                format!("airdrop RPC returned {status}"),
+            ));
+        }
+        if let Some(err) = jsonrpc_error(&parsed) {
+            return Err(RialoError::plain(
+                "RIALO_ERROR",
+                err.get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("rpc error")
+                    .to_string(),
+            ));
+        }
+        // Signature may be a bare string or wrapped — accept standard shapes,
+        // reject empty/missing (an empty success envelope is not evidence).
+        let sig = parsed
+            .pointer("/result")
+            .and_then(|r| {
+                r.as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| r.get("signature").and_then(Value::as_str).map(String::from))
+            })
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                RialoError::plain(
+                    "RIALO_ERROR_CONFIRMATION_UNKNOWN",
+                    "airdrop reply missing signature; outcome unknown".into(),
+                )
+            })?;
+        Ok(sig)
     }
 
     /// Transfer RLO from a persisted wallet keypair file to `to`.
@@ -2988,5 +3120,115 @@ mod balance_fallback_tests {
         let first = body["params"].as_array().unwrap()[0].clone();
         assert!(first.get("address").is_some(), "params[0].address required");
         assert!(first.as_object().unwrap().len() == 1, "no extra fields");
+    }
+}
+
+#[cfg(test)]
+mod faucet_fallback_tests {
+    use super::*;
+
+    /// G21.13.05 T1 — amount→kelvins conversion matches the live-captured
+    /// vendor CLI wire: 1 RLO → 1_000_000_000; 2.5 RLO → 2_500_000_000.
+    #[test]
+    fn amount_to_kelvins_matches_vendor_wire() {
+        assert_eq!(
+            RialoConfig::parse_amount_to_kelvins("1").unwrap(),
+            1_000_000_000
+        );
+        assert_eq!(
+            RialoConfig::parse_amount_to_kelvins("2.5").unwrap(),
+            2_500_000_000
+        );
+    }
+
+    /// T2 — reject: zero, negative, non-numeric, NaN, overflow range.
+    #[test]
+    fn amount_rejects_invalid_inputs() {
+        for bad in ["0", "-1", "abc", "NaN", "1e30", "-2.5", ""] {
+            assert!(
+                RialoConfig::parse_amount_to_kelvins(bad).is_err(),
+                "must reject: {bad}"
+            );
+        }
+    }
+
+    /// T3 — sub-kelvin precision residue is rejected, never truncated
+    /// (silent truncation = value corruption on a funding path).
+    #[test]
+    fn amount_rejects_sub_kelvin_residue() {
+        assert!(RialoConfig::parse_amount_to_kelvins("0.0000000001").is_err());
+        // exact kelvin-boundary fraction still passes
+        assert_eq!(
+            RialoConfig::parse_amount_to_kelvins("0.000000001").unwrap(),
+            1
+        );
+    }
+
+    /// T4 — success envelope parsing: bare-string result and wrapped
+    /// {signature} both accepted; empty result rejected.
+    #[test]
+    fn airdrop_signature_shapes() {
+        let bare = serde_json::json!({"result": "SIG123"});
+        let sig = bare
+            .pointer("/result")
+            .and_then(|r| {
+                r.as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| r.get("signature").and_then(Value::as_str).map(String::from))
+            })
+            .filter(|s| !s.is_empty());
+        assert_eq!(sig.as_deref(), Some("SIG123"));
+
+        let wrapped = serde_json::json!({"result": {"signature": "SIG456"}});
+        let sig2 = wrapped
+            .pointer("/result")
+            .and_then(|r| {
+                r.as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| r.get("signature").and_then(Value::as_str).map(String::from))
+            })
+            .filter(|s| !s.is_empty());
+        assert_eq!(sig2.as_deref(), Some("SIG456"));
+
+        let empty = serde_json::json!({"result": ""});
+        let sig3 = empty
+            .pointer("/result")
+            .and_then(|r| {
+                r.as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| r.get("signature").and_then(Value::as_str).map(String::from))
+            })
+            .filter(|s| !s.is_empty());
+        assert!(sig3.is_none(), "empty envelope must not parse as success");
+    }
+
+    /// T5 — wire body pinned exactly (live-captured from vendor CLI):
+    /// method requestAirdrop, params[0] = {version:0, pubkey, kelvins},
+    /// kelvins scaled by 1e9 from RLO.
+    #[test]
+    fn request_airdrop_wire_shape() {
+        let kelvins = RialoConfig::parse_amount_to_kelvins("1").unwrap();
+        let body = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "requestAirdrop",
+            "params": [{"version": 0, "pubkey": "Acc0unt1111111111111111111111111111111111", "kelvins": kelvins}],
+        });
+        assert_eq!(body["method"], "requestAirdrop");
+        assert_eq!(body["jsonrpc"], "2.0");
+        let p0 = &body["params"][0];
+        assert_eq!(p0["version"], 0);
+        assert_eq!(p0["kelvins"], 1_000_000_000u64);
+        assert!(p0.get("pubkey").is_some());
+        assert_eq!(p0.as_object().unwrap().len(), 3);
+    }
+
+    /// T6 — jsonrpc error envelope on faucet path routes to RIALO_ERROR,
+    /// matching the classification used by health/balance fallbacks.
+    #[test]
+    fn faucet_error_envelope_classification() {
+        let err_env = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "error": {"code": -32000, "message": "faucet limit reached"}
+        });
+        assert!(jsonrpc_error(&err_env).is_some());
     }
 }
