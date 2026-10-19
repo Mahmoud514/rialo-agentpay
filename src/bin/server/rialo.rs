@@ -478,6 +478,10 @@ impl RialoConfig {
         if let Some(dir) = config_dir {
             cmd.arg("-c").arg(dir);
         }
+        // G25 — bounded CLI diagnostics: op, exit code, duration (ms), error
+        // classification, and output LENGTHS only. Never logs raw stdout/
+        // stderr, signatures, key material, or wallet/credential data.
+        let started = std::time::Instant::now();
         let output = cmd
             .arg("--url")
             .arg(&self.rpc_url)
@@ -486,11 +490,18 @@ impl RialoConfig {
             .arg("--json")
             .output()
             .map_err(|e| {
+                eprintln!(
+                    "[rialo-diag] op={:?} exit=spawn_fail dur_ms={} code=RIALO_CLI_UNAVAILABLE",
+                    op,
+                    started.elapsed().as_millis()
+                );
                 RialoError::plain(
                     "RIALO_CLI_UNAVAILABLE",
                     format!("failed to run rialo CLI at {}: {}", self.cli.display(), e),
                 )
             })?;
+        // exit code for the diagnostic arms below (-1 ⇒ killed by signal).
+        let exit_code = output.status.code().unwrap_or(-1);
 
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -520,6 +531,11 @@ impl RialoConfig {
             } else {
                 "RIALO_ERROR"
             };
+            eprintln!(
+                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} code={} outcome=out_unparseable",
+                op, exit_code, started.elapsed().as_millis(),
+                stdout.len(), stderr.len(), code
+            );
             RialoError::plain(
                 code,
                 with_confirmation_timeout_note(
@@ -563,6 +579,16 @@ impl RialoConfig {
             } else {
                 None
             };
+            eprintln!(
+                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} sig_evidence={} code={} outcome=envelope_error",
+                op,
+                exit_code,
+                started.elapsed().as_millis(),
+                stdout.len(),
+                stderr.len(),
+                surfaced_signature.is_some(),
+                code
+            );
             return Err(RialoError {
                 code,
                 detail: with_confirmation_timeout_note(code, message),
@@ -573,6 +599,15 @@ impl RialoConfig {
         if !output.status.success() {
             let text = if stderr.is_empty() { &stdout } else { &stderr };
             let code = classify(op, text);
+            eprintln!(
+                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} code={} outcome=exit_nonzero",
+                op,
+                exit_code,
+                started.elapsed().as_millis(),
+                stdout.len(),
+                stderr.len(),
+                code
+            );
             return Err(RialoError::plain(
                 code,
                 with_confirmation_timeout_note(code, first_line(text)),
@@ -3230,5 +3265,183 @@ mod faucet_fallback_tests {
             "error": {"code": -32000, "message": "faucet limit reached"}
         });
         assert!(jsonrpc_error(&err_env).is_some());
+    }
+}
+
+#[cfg(test)]
+mod cli_diag_tests {
+    use super::*;
+    use std::io::Write as _;
+    use std::process::Command;
+
+    /// G25 — offline shim harness: a tiny shell script standing in for the
+    /// `rialo` CLI. Pure-local (loopback sink pages are inert JSON/exit
+    /// codes); no real chain, no network transfers, no Faucet.
+    struct Shim<'a> {
+        script: &'a str,
+    }
+
+    impl Shim<'_> {
+        /// Materialize the shim as an executable file (bash script), like a
+        /// real CLI binary. Returns (config, tempdir-path-to-clean).
+        fn arm(&self) -> (RialoConfig, std::path::PathBuf) {
+            // G28 — per-call unique dir: PID-only keys made concurrent CI
+            // tests race on one shared shim file (cross-script overwrite).
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "g25-shim-{}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("rialo");
+            {
+                let mut f = std::fs::File::create(&path).unwrap();
+                f.write_all(self.script.as_bytes()).unwrap();
+            }
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let cfg = RialoConfig {
+                cli: path,
+                rpc_url: "http://127.0.0.1:9".into(), // dummy: shim never dials
+                program_id: None,
+                program_dir: dir.clone(),
+            };
+            (cfg, dir)
+        }
+    }
+
+    fn transfer_of(cfg: &RialoConfig) -> Result<String, RialoError> {
+        cfg.transfer(
+            &std::path::PathBuf::from("/tmp/g25-ignored-keypair.json"),
+            "BDEu6owtws5wsuJHxygJuXfFSM1RNgKvQuimeS5NxVBM",
+            "0.001",
+        )
+    }
+
+    /// T1 — spawn failure: shim path does not exist => RIALO_CLI_UNAVAILABLE
+    /// with op recorded in diagnostic line (stderr asserted indirectly via
+    /// code classification; the diag print itself is exercised for panics).
+    #[test]
+    fn diag_spawn_fail_reports_cli_unavailable() {
+        let cfg = RialoConfig {
+            cli: "/tmp/definitely-not-an-executable-rialo-9x7y".into(),
+            rpc_url: "http://127.0.0.1:9".into(),
+            program_id: None,
+            program_dir: "/tmp".into(),
+        };
+        let err = cfg
+            .run(Operation::Read, &["client", "get-block-height"])
+            .err()
+            .expect("spawn must fail");
+        assert_eq!(err.code, "RIALO_CLI_UNAVAILABLE");
+        let _ = transfer_of(&cfg); // transfer path exercises same runner
+    }
+
+    /// T2 — invalid JSON output (exit 0) → RIALO_ERROR, outcome=out_unparseable
+    #[test]
+    fn diag_invalid_json_classifies_rialo_error_and_ok_parse_untouched() {
+        let (cfg, _tmp) = Shim {
+            script: "#!/bin/sh\necho '<!doctype html>'\n",
+        }
+        .arm();
+        // HTML output can NEVER parse as JSON (map_err → RIALO_ERROR) even
+        // on exit 0 — decode failure is inside serde_json, not the exit code.
+        let err = cfg
+            .run(Operation::Read, &["client", "get-block-height"])
+            .err()
+            .expect("non-JSON output must error via the out_unparseable arm");
+        assert_eq!(err.code, "RIALO_ERROR");
+
+        // invalid JSON with exit 1 → out_unparseable arm → RIALO_ERROR
+        let (cfg2, _t2) = Shim {
+            script: "#!/bin/sh\necho 'garbage-not-json' >&2\nexit 1\n",
+        }
+        .arm();
+        let err = cfg2
+            .run(Operation::Read, &["client", "get-block-height"])
+            .err()
+            .expect("non-JSON + exit1 must error");
+        assert_eq!(err.code, "RIALO_ERROR");
+    }
+
+    /// T3 — success:false envelope WITHOUT signature → envelope_error, no sig
+    #[test]
+    fn diag_envelope_error_without_signature() {
+        let (cfg, _tmp) = Shim {
+            script: r##"#!/bin/sh
+            echo '{"success":false,"message":"insufficient funds for fee"}'
+            "##,
+        }
+        .arm();
+        let err = transfer_of(&cfg).err().expect("envelope error must error");
+        assert_eq!(err.code, "RIALO_ERROR");
+        assert!(err.tx_signature.is_none());
+    }
+
+    /// T3b — success:false envelope WITH a plausible signature → surfaced in
+    /// tx_signature (evidence present; never treated as proof of broadcast).
+    #[test]
+    fn diag_envelope_error_with_signature_surface() {
+        let (cfg, _tmp) = Shim {
+            script: r##"#!/bin/sh
+            echo '{"success":false,"message":"confirmation timed out after broadcast","signature":"3SkBuJyL7tgM5pHkSV1EwmqRUVCVE1fTWtGFtnkzJHMhRHTdwfUdXh6fLXTYy1PwhVXADc4Uac7obKIfE5YvXee"}'
+            "##,
+        }
+        .arm();
+        let err = transfer_of(&cfg).err().expect("envelope error must error");
+        assert!(
+            err.tx_signature.is_some(),
+            "signature evidence must surface (presence only — never logged as a broadcast fact)"
+        );
+    }
+
+    /// T4 — transfer() must NOT auto-retry on CONFIRMATION_TIMEOUT: the shim
+    /// counts its own invocations in a side file; exactly ONE CLI call is
+    /// allowed for this error class (no clock-skew retry, no re-broadcast).
+    #[test]
+    fn transfer_timeout_never_retries_cli() {
+        let dir = std::env::temp_dir().join(format!("g25-attempts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cnt = dir.join("count");
+        std::fs::write(&cnt, "0").unwrap();
+        let script = format!(
+            r##"#!/bin/sh
+            n=$(cat "{}"); n=$((n+1)); echo "$n" > "{}"
+            if [ "$n" -gt 1 ]; then echo '{{"success":true,"signature":"OKSHOULDNEVERHAPPEN"}}'; fi
+            echo '{{"success":false,"message":"confirmation timed out","signature":"5VfGSo6VR1kKfQKGYWqNRvkgwPUKdf5pGmSbeYJeWqVKwPGH1VQeLCqQCwffaFW4dbQGJFTnZPCZr8LEJkroREcT"}}'
+            "##,
+            cnt.display(),
+            cnt.display()
+        );
+        let shim = Shim {
+            script: Box::leak(script.into_boxed_str()),
+        };
+        let (cfg, _tmp) = shim.arm();
+        let err = transfer_of(&cfg)
+            .err()
+            .expect("confirmation timeout must surface as error");
+        assert_eq!(err.code, "RIALO_TRANSFER_CONFIRMATION_TIMEOUT");
+        let n: usize = std::fs::read_to_string(&cnt)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(n, 1, "auto-retry on uncertain outcome is forbidden");
+    }
+
+    /// T5 — clock-skew retry contract UNCHANGED by diagnostics (sanity):
+    /// is_retryable_clock_skew still ONLY for RIALO_CLOCK_SKEW.
+    #[test]
+    fn retry_gate_unchanged() {
+        assert!(is_retryable_clock_skew("RIALO_CLOCK_SKEW"));
+        assert!(!is_retryable_clock_skew(
+            "RIALO_TRANSFER_CONFIRMATION_TIMEOUT"
+        ));
+        assert!(!is_retryable_clock_skew("RIALO_ERROR"));
     }
 }
