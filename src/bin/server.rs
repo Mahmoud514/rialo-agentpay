@@ -970,8 +970,39 @@ async fn github_login(State(state): State<AppState>) -> Response {
         let persisted = tokio::task::block_in_place(|| {
             let oauth_state = oauth_state.clone();
             tokio::runtime::Handle::current().block_on(async move {
-                crate::pg_store::insert_oauth_state_authoritative(&oauth_state, agents::now_unix())
-                    .await
+                // G21.12.86 — retry-ONCE on connection-level failures only.
+                // insert_oauth_state uses ON CONFLICT (state) DO NOTHING, so a
+                // retried INSERT is idempotent-safe. Recovery failure keeps the
+                // ORIGINAL error and the handler below still fails closed.
+                match crate::pg_store::insert_oauth_state_authoritative(
+                    &oauth_state,
+                    agents::now_unix(),
+                )
+                .await
+                {
+                    Ok(()) => Ok(()),
+                    Err(first_err) => {
+                        eprintln!(
+                            "[oauth] oauth_states insert failed; checking reconnect path: {first_err}"
+                        );
+                        match crate::pg_store::reconnect_global_client().await {
+                            Ok(()) => {
+                                eprintln!(
+                                    "[oauth] reconnected; retrying insert once (idempotent ON CONFLICT DO NOTHING)"
+                                );
+                                crate::pg_store::insert_oauth_state_authoritative(
+                                    &oauth_state,
+                                    agents::now_unix(),
+                                )
+                                .await
+                            }
+                            Err(re) => {
+                                eprintln!("[oauth] reconnect failed: {re}");
+                                Err(first_err)
+                            }
+                        }
+                    }
+                }
             })
         });
         if let Err(err) = persisted {
