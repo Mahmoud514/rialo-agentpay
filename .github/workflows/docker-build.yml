@@ -38,6 +38,31 @@ jobs:
       - name: Verify lockfile integrity (host, cheap, before docker)
         run: cargo +nightly fetch --locked
 
+      # ── G21: provide the pinned Rialo CLI 0.18.1 (RIALO_CLI_UNAVAILABLE fix) ──
+      # Supply chain: the vendor tarball is NOT in git (127MB, gitignored).
+      # It must come from a GitHub Release asset on this repository that the
+      # OPERATOR uploaded once. Trust model (honest scope):
+      #   * the asset URL is pinned in this file (operator-controlled asset)
+      #   * integrity = the SHA256 gate below + the Dockerfile's own
+      #     `sha256sum -c` (build hard-fails on any mismatch)
+      #   * *no independent upstream signature exists for the vendor bundle
+      #     today* — documented in vendor/RIALO_CLI_PROVENANCE.md; do not
+      #     claim a stronger verification than the pinned-hash match.
+      # Local/air-gapped note: `gh release upload` needs the exact digest
+      #   652c94e14d0744f617988199515bbad1977fe40390b0a998928c1e2bb7e6af69
+      - name: Fetch pinned Rialo CLI 0.18.1 bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p vendor
+          gh release download rialo-cli-0.18.1 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "binaries-stable-0.18.1-linux-amd64.tar.gz" \
+            --output vendor/binaries-stable-0.18.1-linux-amd64.tar.gz
+          echo "652c94e14d0744f617988199515bbad1977fe40390b0a998928c1e2bb7e6af69  vendor/binaries-stable-0.18.1-linux-amd64.tar.gz" \
+            | sha256sum -c -
+
       # Required for the GHA cache backend: the default `docker` driver
       # cannot export caches (Cache export is not supported for the docker
       # driver — run 38506909590). Buildx sets up a docker-container driver.
