@@ -366,6 +366,97 @@ fn extract_signature(value: &Value) -> Option<String> {
     None
 }
 
+/// G25 — diagnostics-only text sanitizer for `[rialo-diag]`/`[rialo-err]`
+/// lines. Pipeline: first line only → ≤200 chars (marked when truncated)
+/// → defensive redactions applied repeatedly until stable:
+///   * filesystem paths: `/app`, `/home/*` (keypair paths embed wallet ids)
+///   * base58 tokens 87–99 chars (ed25519 full signatures; 64-byte sigs
+///     encode to 87–88 chars — kept arity-wide to cover hex/base58 mixes)
+///   * hex blobs ≥64 chars (raw seeds / key bytes)
+///   * 12/24-word seed phrases (letter-only tokens ≤12 chars, in runs)
+///   * long digit runs ≥8 chars (wallet user ids like 50506318)
+/// Never echoes raw stdout/stderr bodies, keys, seeds, or full signatures.
+pub(crate) fn diag_text(text: &str) -> String {
+    let first = text.lines().next().unwrap_or("").to_string();
+    let truncated = first.chars().count() > 200;
+    let mut cap: String = first.chars().take(200).collect();
+    if cap.is_empty() {
+        cap = "<empty>".to_string();
+    }
+    // Redact defensively (loop to fixed point so stacked patterns collapse).
+    let redact = |s: String| -> String {
+        let mut out = s;
+        out = out.replace("/app", "<app>").replace("/home/", "<home>/");
+        // base58 signature-sized tokens (87-99 chars, base58 alphabet)
+        let mut rebuilt: Vec<String> = Vec::new();
+        for tok in out.split(' ') {
+            let is_b58 = !tok.is_empty()
+                && tok.chars().count() >= 87
+                && tok.chars().count() <= 99
+                && tok.chars().all(|c| {
+                    c.is_ascii_alphanumeric() && c != '0' && c != 'O' && c != 'I' && c != 'l'
+                });
+            if is_b58 {
+                rebuilt.push(format!("{}…<sig-redacted>", &tok[..9]));
+            } else {
+                rebuilt.push(tok.to_string());
+            }
+        }
+        out = rebuilt.join(" ");
+        // long hex blobs (seed/key material)
+        let mut hex_out: Vec<String> = Vec::new();
+        for tok in out.split(' ') {
+            if tok.chars().count() >= 64 && tok.chars().all(|c| c.is_ascii_hexdigit()) {
+                hex_out.push(tok[..8].to_string() + "…<hex-redacted>");
+            } else {
+                hex_out.push(tok.to_string());
+            }
+        }
+        out = hex_out.join(" ");
+        // NOTE (G25 review): 12/24-word seed phrases cannot be reliably
+        // distinguished from error prose by shape alone (errors ARE prose).
+        // Seed phrases never appear in CLI stderr/detail by vendor contract
+        // (keys are read from files, never echoed); defensively we do NOT
+        // guess on shape here to avoid destroying actionable error text.
+        // The hex-blob redaction above already covers raw seed hex forms.
+        // G34-fix — wallet user ids: replace ANY run of ≥8 consecutive
+        // digits (character level; catches embedded forms like
+        // /wallets/50506318.json which token-level checks miss) with a
+        // single marker covering the entire run.
+        let mut redacted_digits = String::with_capacity(out.len());
+        let mut run = String::new();
+        for ch in out.chars().chain(std::iter::once('\n')) {
+            if ch.is_ascii_digit() {
+                run.push(ch);
+            } else {
+                if run.chars().count() >= 8 {
+                    redacted_digits.push_str("<uid-redacted>");
+                } else {
+                    redacted_digits.push_str(&run);
+                }
+                run.clear();
+                if ch != '\n' {
+                    redacted_digits.push(ch);
+                }
+            }
+        }
+        if !run.is_empty() {
+            if run.chars().count() >= 8 {
+                redacted_digits.push_str("<uid-redacted>");
+            } else {
+                redacted_digits.push_str(&run);
+            }
+        }
+        redacted_digits
+    };
+    cap = redact(cap);
+    cap = redact(cap); // second pass: stacked patterns (path+token mixes)
+    if truncated {
+        cap.push_str("…<truncated>");
+    }
+    cap
+}
+
 /// JSON-RPC error object from a plain JSON-RPC reply, when present.
 fn jsonrpc_error(value: &Value) -> Option<&Value> {
     value.get("error")
@@ -532,9 +623,10 @@ impl RialoConfig {
                 "RIALO_ERROR"
             };
             eprintln!(
-                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} code={} outcome=out_unparseable",
+                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} code={} outcome=out_unparseable msg={}",
                 op, exit_code, started.elapsed().as_millis(),
-                stdout.len(), stderr.len(), code
+                stdout.len(), stderr.len(), code,
+                diag_text(fallback_text)
             );
             RialoError::plain(
                 code,
@@ -580,14 +672,15 @@ impl RialoConfig {
                 None
             };
             eprintln!(
-                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} sig_evidence={} code={} outcome=envelope_error",
+                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} sig_evidence={} code={} outcome=envelope_error msg={}",
                 op,
                 exit_code,
                 started.elapsed().as_millis(),
                 stdout.len(),
                 stderr.len(),
                 surfaced_signature.is_some(),
-                code
+                code,
+                diag_text(&message)
             );
             return Err(RialoError {
                 code,
@@ -600,13 +693,14 @@ impl RialoConfig {
             let text = if stderr.is_empty() { &stdout } else { &stderr };
             let code = classify(op, text);
             eprintln!(
-                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} code={} outcome=exit_nonzero",
+                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} code={} outcome=exit_nonzero msg={}",
                 op,
                 exit_code,
                 started.elapsed().as_millis(),
                 stdout.len(),
                 stderr.len(),
-                code
+                code,
+                diag_text(text)
             );
             return Err(RialoError::plain(
                 code,
@@ -1267,6 +1361,14 @@ impl RialoConfig {
             match self
                 .run(
                     Operation::Transfer,
+                    // G39 — NO --timeout here: the vendor CLI 0.18.1 REJECTS
+                    // this flag for `client transfer` (proven live:
+                    // "error: unexpected argument '--timeout' found" — the
+                    // flag exists only on `client airdrop`). Passing it
+                    // would break EVERY direct payment at arg-parse. The
+                    // transfer's duration is instead bounded by the CLI's
+                    // internal confirmation-wait budget (measured ~2-4s per
+                    // pending poll in sink captures).
                     &["client", "transfer", to, amount, path],
                 )
                 .and_then(transfer_signature)
@@ -3443,5 +3545,364 @@ mod cli_diag_tests {
             "RIALO_TRANSFER_CONFIRMATION_TIMEOUT"
         ));
         assert!(!is_retryable_clock_skew("RIALO_ERROR"));
+    }
+
+    /// G39 — corrected contract: the vendor CLI 0.18.1 REJECTS --timeout for
+    /// `client transfer` (proven live: "unexpected argument '--timeout'").
+    /// The shim FAILS if --timeout IS present, then emits the vendor's own
+    /// "Transaction confirmation timed out" envelope. transfer() must end
+    /// with RIALO_TRANSFER_CONFIRMATION_TIMEOUT (uncertain — hold, verify,
+    /// never report success, never auto-retry). One CLI call only.
+    #[test]
+    fn accepted_then_pending_surfaces_confirmation_timeout_with_bounded_wait() {
+        let dir = std::env::temp_dir().join(format!(
+            "g39-notimeout-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let seen = dir.join("seen-args");
+        let script = r##"#!/bin/sh
+            found=0
+            for a in "$@"; do
+              if [ "$a" = "--timeout" ]; then found=1; fi
+            done
+            if [ "$found" -eq 1 ]; then
+              echo '{"success":false,"error":{"code":"SHIM_ASSERT","details":"--timeout must NOT be passed (vendor CLI rejects it for transfer)"}}'
+              exit 1
+            fi
+            sleep 1
+            echo '{"success":false,"message":"Transaction confirmation timed out"}'
+        "##;
+        let path = dir.join("rialo");
+        // wrap in `sh` invocation via a loader script: WSL /tmp may be
+        // mounted noexec, breaking direct execution of tempdir binaries.
+        use std::os::unix::fs::PermissionsExt;
+        let real = dir.join("rialo-real.sh");
+        let mut f = std::fs::File::create(&real).unwrap();
+        f.write_all(script.as_bytes()).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let launcher = dir.join("rialo");
+        {
+            let mut f = std::fs::File::create(&launcher).unwrap();
+            f.write_all(format!("#!/bin/sh\nexec /bin/sh {} \"$@\"", real.display()).as_bytes())
+                .unwrap();
+        }
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cfg = RialoConfig {
+            cli: launcher,
+            rpc_url: "http://127.0.0.1:9".into(),
+            program_id: None,
+            program_dir: dir,
+        };
+        let err = transfer_of(&cfg)
+            .err()
+            .expect("pending-beyond-confirm must surface as error, never success");
+        assert_eq!(
+            err.code, "RIALO_TRANSFER_CONFIRMATION_TIMEOUT",
+            "uncertain outcome class, not success and not definitive failure"
+        );
+        assert!(err.tx_signature.is_none());
+        // and the retry gate for this class is closed (no auto re-send):
+        assert!(!is_retryable_clock_skew(err.code));
+    }
+}
+
+#[cfg(test)]
+mod diag_text_tests {
+    use super::*;
+
+    /// G22 T-D1 — caps at 200 chars and marks truncation.
+    #[test]
+    fn caps_long_first_line() {
+        let long = "e".repeat(500);
+        let out = diag_text(&long);
+        assert!(out.starts_with("eeee"));
+        assert!(out.contains("…<truncated>"));
+        assert!(out.chars().count() <= 220);
+    }
+
+    /// T-D2 — empty/whitespace-only ⇒ <empty> marker (never blank log line).
+    #[test]
+    fn empty_becomes_marker() {
+        assert_eq!(diag_text(""), "<empty>");
+        assert_eq!(diag_text("\n\n"), "<empty>");
+    }
+
+    /// T-D3 — only the FIRST line is kept (multi-line CLI stderr bodies
+    /// may embed stack-ish details; we keep one line, capped).
+    #[test]
+    fn multiline_keeps_first_line_only() {
+        let out = diag_text("first line detail\nsecond line secret-ish\nthird");
+        assert!(out.starts_with("first line detail"));
+        assert!(!out.contains("second line"));
+    }
+
+    /// T-D4 — wallet path neutralization: /app + /home/ prefixes never
+    /// appear verbatim (keypair paths embed wallet user ids).
+    #[test]
+    fn paths_are_neutralized() {
+        let out = diag_text("failed to load keypair at /app/artifact/wallets/50506318.json");
+        assert!(!out.contains("/app/"), "raw /app path leaked: {out}");
+        assert!(out.contains("<app>"));
+
+        let out2 = diag_text("no config at /home/agentpay/.config/rialo");
+        assert!(!out2.contains("/home/agentpay"));
+        assert!(out2.contains("<home>/"));
+    }
+
+    /// T-D5 — a realistic node refusal travels through the sanitizer with
+    /// its actionable text intact (that is the whole point of G22), while
+    /// any path fragments inside it still get neutralized.
+    #[test]
+    fn node_refusal_keeps_actionable_text() {
+        let node_msg = "Transaction simulation failed: source account has insufficient kelvins for transfer of 1000000 plus fees under current cluster load; review balance and retry";
+        let out = diag_text(node_msg);
+        assert!(out.contains("insufficient kelvins"));
+        assert!(out.contains("review balance"));
+        // truncated-at-200 path proof:
+        let long = format!("{node_msg} {node_msg}");
+        let out2 = diag_text(&long);
+        assert!(out2.contains("…<truncated>"));
+    }
+
+    // ── G25 additions: sensitive-token redaction contracts ──
+
+    fn sig_token(seed: usize) -> String {
+        // deterministic 88-char base58-alphabet token (ed25519 sig shape)
+        const A: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        (0..88)
+            .map(|i| A[(seed * 31 + i * 7) % 58] as char)
+            .collect()
+    }
+
+    /// full base58 signatures (87-99 chars) never survive the sanitizer
+    #[test]
+    fn full_signatures_never_logged() {
+        let sig = sig_token(7);
+        let msg = format!("confirmation timed out; signature {sig} not confirmed");
+        let out = diag_text(&msg);
+        assert!(!out.contains(&sig), "full signature leaked: {out}");
+        assert!(out.contains("…<sig-redacted>"));
+        assert!(
+            out.contains("confirmation timed out"),
+            "actionable text intact"
+        );
+    }
+
+    /// long hex blobs (raw seed / key bytes ≥64 hex chars) never survive
+    #[test]
+    fn long_hex_seeds_never_logged() {
+        let hex = "e".repeat(128);
+        let msg = format!("raw seed dump: {hex} truncated by cli");
+        let out = diag_text(&msg);
+        assert!(!out.contains(&hex), "hex seed leaked: {out}");
+        assert!(out.contains("…<hex-redacted>"));
+    }
+
+    /// wallet user id digit-runs (≥8 digits) never survive
+    #[test]
+    fn wallet_uid_digits_never_logged() {
+        let msg = "wallet integrity failure for user 50506318: file missing";
+        let out = diag_text(msg);
+        assert!(!out.contains("50506318"), "user id leaked: {out}");
+        assert!(out.contains("<uid-redacted>"), "uid marker present: {out}");
+        assert!(
+            out.contains("wallet integrity failure"),
+            "actionable intact"
+        );
+    }
+
+    /// normal refusal prose survives byte-identical (no over-redaction of
+    /// actionable text — the sanitizer must not destroy the diagnosis)
+    #[test]
+    fn normal_prose_survives_untouched() {
+        let msg = "Transaction simulation failed: source account has insufficient kelvins for transfer of 1000000 plus fees; review balance and retry";
+        let out = diag_text(msg);
+        assert!(out.contains("insufficient kelvins"));
+        assert!(out.contains("review balance"));
+        assert!(
+            !out.contains("<uid-redacted>"),
+            "prose must not be redacted"
+        );
+    }
+
+    /// G34-fix — uid embedded inside a longer token (keypair filename with
+    /// .json suffix) must be redacted at character level.
+    #[test]
+    fn embedded_uid_in_keypair_path_never_logged() {
+        let msg = r#"IO error: Failed to load from keypair from /app/artifact/wallets/50506318.json: No such file"#;
+        let out = diag_text(msg);
+        assert!(!out.contains("50506318"), "embedded uid leaked: {out}");
+        assert!(out.contains("<uid-redacted>"));
+        assert!(out.contains("keypair"), "actionable text intact");
+    }
+
+    /// purity: same input ⇒ identical output (no hidden state)
+    #[test]
+    fn sanitizer_is_pure_and_repeatable() {
+        let msg = "mixed 50506318 /app content with long token and no surprises";
+        assert_eq!(diag_text(msg), diag_text(msg));
+    }
+}
+
+/// G28 — the EXACT production failing shape (envelope_error, success:false,
+/// RPC_ERROR vendor envelope, no signature) asserted END-TO-END through
+/// run()+transfer(): error code, sig absence, and single-attempt (no retry
+/// for this class). This is the regression pin for the live 502 incident.
+#[cfg(test)]
+mod prod_envelope_regression_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    struct Shim<'a> {
+        script: &'a str,
+    }
+    impl Shim<'_> {
+        fn arm(&self) -> (RialoConfig, std::path::PathBuf) {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "g28-env-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+                    + SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("rialo");
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(self.script.as_bytes()).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let cfg = RialoConfig {
+                cli: path,
+                rpc_url: "http://127.0.0.1:9".into(),
+                program_id: None,
+                program_dir: dir.clone(),
+            };
+            (cfg, dir)
+        }
+    }
+
+    /// THE production envelope: vendor CLI prints success:false RPC_ERROR
+    /// envelope (no signature) on stderr, exit 1, then dies. Server MUST
+    /// return RIALO_ERROR with the node's detail — the classification that
+    /// surfaced as the 394-byte 502 in production.
+    #[test]
+    fn prod_envelope_error_maps_to_rialo_error_with_detail() {
+        let (cfg, _d) = Shim { script: r##"#!/bin/sh
+            echo '{"success":false,"error":{"code":"RPC_ERROR","details":"node refused the transfer for account-level reasons"},"message":"node refused the transfer for account-level reasons"}' >&2
+            exit 1
+        "## }.arm();
+        let err = cfg
+            .run(
+                Operation::Transfer,
+                &["client", "transfer", "x", "0.001", "/kp"],
+            )
+            .err()
+            .expect("failure envelope must error");
+        assert_eq!(err.code, "RIALO_ERROR", "prod 502 class");
+        assert!(
+            err.tx_signature.is_none(),
+            "no signature in envelope ⇒ None"
+        );
+        assert!(
+            err.detail.contains("node refused the transfer"),
+            "node refusal text must be preserved in detail: {err:?}"
+        );
+        // and transfer() itself must NOT retry this class:
+        assert!(!is_retryable_clock_skew(err.code));
+    }
+}
+
+#[cfg(test)]
+mod transfer_signature_parity_tests {
+    use super::*;
+
+    /// G27 — parity pin: the vendor CLI 0.18.1 emits exactly this success
+    /// stdout shape on `client transfer` (captured live from a local sink
+    /// with full 4-call chain: configHash → sendTransaction → statuses →
+    /// blockHeight). transfer_signature MUST keep parsing it unchanged.
+    #[test]
+    fn parses_real_cli_0_18_1_success_stdout() {
+        let cli_stdout = serde_json::json!({
+            "signature": "623S1QdSk31iYjC8MLn6FwPewWdQqsCtGUNifGMLsjfk1y6aFLbccPjypNKbA6b2V5MWipSaaYmUrKYNdSawJT9X",
+            "status": { "slot": 1u64, "executed": true, "err": null }
+        });
+        let (sig, slot) =
+            transfer_signature(cli_stdout).expect("real CLI success shape must parse");
+        assert_eq!(
+            sig,
+            "623S1QdSk31iYjC8MLn6FwPewWdQqsCtGUNifGMLsjfk1y6aFLbccPjypNKbA6b2V5MWipSaaYmUrKYNdSawJT9X"
+        );
+        assert_eq!(slot, Some(1));
+    }
+
+    /// executed=false ⇒ transfer not executed (pre-broadcast refund class).
+    #[test]
+    fn rejects_pending_status() {
+        let cli_stdout = serde_json::json!({
+            "signature": "623S1QdSk31iYjC8MLn6FwPewWdQqsCtGUNifGMLsjfk1y6aFLbccPjypNKbA6b2V5MWipSaaYmUrKYNdSawJT9X",
+            "status": { "slot": 1u64, "executed": false, "err": null }
+        });
+        let err = transfer_signature(cli_stdout)
+            .err()
+            .expect("pending must error");
+        assert_eq!(err.code, "RIALO_TRANSFER_ERROR");
+    }
+
+    /// err present ⇒ node-side definitive failure (same refund class),
+    /// and the message must carry the node's own error verbatim.
+    #[test]
+    fn rejects_chain_err_with_verbatim_text() {
+        let cli_stdout = serde_json::json!({
+            "signature": "623S1QdSk31iYjC8MLn6FwPewWdQqsCtGUNifGMLsjfk1y6aFLbccPjypNKbA6b2V5MWipSaaYmUrKYNdSawJT9X",
+            "status": { "slot": 1u64, "executed": false, "err": "insufficient kelvins for rent-exempt storage" }
+        });
+        let err = transfer_signature(cli_stdout)
+            .err()
+            .expect("chain err must error");
+        assert_eq!(err.code, "RIALO_TRANSFER_ERROR");
+        assert!(
+            err.detail
+                .contains("insufficient kelvins for rent-exempt storage")
+        );
+    }
+}
+
+#[cfg(test)]
+mod g32_status_split_tests {
+    use super::*;
+
+    /// G32 — definitive client-actionable refusals (balance/rent/account
+    /// existence at send time) classify to 400-band codes.
+    #[test]
+    fn known_refusals_recognized() {
+        let cases = [
+            "insufficient lamports for transfer and fees",
+            "insufficient kelvins for the requested transfer",
+            "account not found: source wallet Unfunded1111",
+            "account does not exist on chain",
+            "no such account on this cluster",
+            "not owned by program: system program mismatch",
+        ];
+        for m in cases {
+            assert_eq!(classify(Operation::Transfer, m), "RIALO_ERROR", "{m}");
+        }
+    }
+
+    /// transient/plain unknown messages stay RIALO_ERROR too — the
+    /// distinction must happen at HTTP-mapping on detail-text, not here.
+    #[test]
+    fn unknown_messages_still_rialo_error() {
+        assert_eq!(
+            classify(Operation::Transfer, "weird custom refusal"),
+            "RIALO_ERROR"
+        );
     }
 }

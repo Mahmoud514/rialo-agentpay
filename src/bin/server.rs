@@ -263,12 +263,69 @@ fn api_error(status: StatusCode, code: &str, detail: &str) -> Response {
 }
 
 fn rialo_error_response(err: &RialoError) -> Response {
-    let status = if err.is_rpc_down() {
+    // G31 — three-way status mapping with honest semantics:
+    //   * RIALO_RPC_UNAVAILABLE / _CLI_UNAVAILABLE / confirmation-timeout
+    //     ⇒ 503 SERVICE_UNAVAILABLE (transient infrastructure — retryable
+    //     later, never a client fault, never a tx result).
+    //   * RIALO_WALLET_ERROR ⇒ 500 INTERNAL (operator remediation required:
+    //     wallet integrity/registry issues are server-side state).
+    //   * everything else (RIALO_ERROR / RIALO_TRANSFER_ERROR / CLOCK_SKEW
+    //     / PROGRAM_ERROR — node refusals with real on-chain reasoning)
+    //     ⇒ 400 BAD_REQUEST: the node answered with a decision about THIS
+    //     transaction; the previous blanket 502 (a gateway-code for an
+    //     app-authored decision) is what muddied the original diagnosis.
+    //     The client still sees the full refusal detail through the JSON
+    //     error body — nothing is hidden or softened.
+    let status = if err.is_rpc_down()
+        || err.code == "RIALO_CLI_UNAVAILABLE"
+        || err.code == "RIALO_TRANSFER_CONFIRMATION_TIMEOUT"
+        || err.code == "RIALO_ERROR_CONFIRMATION_UNKNOWN"
+    {
+        // transient-infrastructure / uncertainty band: retryable later, never
+        // a client fault, never a tx verdict (hold + on-chain verify instead)
         StatusCode::SERVICE_UNAVAILABLE
+    } else if err.code == "RIALO_WALLET_ERROR" {
+        StatusCode::INTERNAL_SERVER_ERROR
     } else {
-        StatusCode::BAD_GATEWAY
+        // G32 correction — split the RIALO_ERROR bucket honestly:
+        // deterministically-known client-actionable refusals (balance/rent/
+        // account-missing at send time) ⇐ 400 with the node's verbatim
+        // detail preserved; EVERYTHING ELSE stays 502 (unknown upstream —
+        // never blanket-stuff unknown-cause failures into 4xx per the G32
+        // review rule: unknown infrastructure failures must not be
+        // re-labelled as client faults merely to eliminate a 502).
+        // G33 — match against the FIRST line only: multi-line CLI stderr
+        // can carry unrelated trailing context whose keywords must not
+        // leak into the classification of the primary refusal.
+        let lower = err.detail.lines().next().unwrap_or("").to_lowercase();
+        if lower.contains("insufficient")
+            || lower.contains("account not found")
+            || lower.contains("account does not exist")
+            || lower.contains("no such account")
+            || lower.contains("not owned by program")
+        {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::BAD_GATEWAY
+        }
     };
-    api_error(status, err.code, &err.detail)
+    // G24 — server-side record for every rialo failure surfaced as 5xx: the
+    // 502 investigation proved these details died in the HTTP body alone.
+    // Sanitized preview only (diag_text: first line, ≤200 chars, paths
+    // neutralized); signature values are reported as presence, never logged.
+    let detail_preview = crate::rialo::diag_text(&err.detail);
+    eprintln!(
+        "[rialo-err] status={} op-code={} sig_evidence={} detail={}",
+        status.as_u16(),
+        err.code,
+        err.tx_signature.is_some(),
+        detail_preview
+    );
+    // G34 — the HTTP body carries the SAME sanitized preview: vendor CLI
+    // failure envelopes can embed internal keypair paths (proven:
+    // "Failed to load ... /app/artifact/wallets/<uid>.json" flows through
+    // the envelope into err.detail). Never emit the raw detail to clients.
+    api_error(status, err.code, &detail_preview)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
