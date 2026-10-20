@@ -623,9 +623,10 @@ impl RialoConfig {
                 "RIALO_ERROR"
             };
             eprintln!(
-                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} code={} outcome=out_unparseable",
+                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} code={} outcome=out_unparseable msg={}",
                 op, exit_code, started.elapsed().as_millis(),
-                stdout.len(), stderr.len(), code
+                stdout.len(), stderr.len(), code,
+                diag_text(fallback_text)
             );
             RialoError::plain(
                 code,
@@ -671,14 +672,15 @@ impl RialoConfig {
                 None
             };
             eprintln!(
-                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} sig_evidence={} code={} outcome=envelope_error",
+                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} sig_evidence={} code={} outcome=envelope_error msg={}",
                 op,
                 exit_code,
                 started.elapsed().as_millis(),
                 stdout.len(),
                 stderr.len(),
                 surfaced_signature.is_some(),
-                code
+                code,
+                diag_text(&message)
             );
             return Err(RialoError {
                 code,
@@ -691,13 +693,14 @@ impl RialoConfig {
             let text = if stderr.is_empty() { &stdout } else { &stderr };
             let code = classify(op, text);
             eprintln!(
-                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} code={} outcome=exit_nonzero",
+                "[rialo-diag] op={:?} exit={} dur_ms={} out_len={} err_len={} code={} outcome=exit_nonzero msg={}",
                 op,
                 exit_code,
                 started.elapsed().as_millis(),
                 stdout.len(),
                 stderr.len(),
-                code
+                code,
+                diag_text(text)
             );
             return Err(RialoError::plain(
                 code,
