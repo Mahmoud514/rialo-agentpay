@@ -3650,3 +3650,58 @@ mod diag_text_tests {
         assert_eq!(diag_text(msg), diag_text(msg));
     }
 }
+
+#[cfg(test)]
+mod transfer_signature_parity_tests {
+    use super::*;
+
+    /// G27 — parity pin: the vendor CLI 0.18.1 emits exactly this success
+    /// stdout shape on `client transfer` (captured live from a local sink
+    /// with full 4-call chain: configHash → sendTransaction → statuses →
+    /// blockHeight). transfer_signature MUST keep parsing it unchanged.
+    #[test]
+    fn parses_real_cli_0_18_1_success_stdout() {
+        let cli_stdout = serde_json::json!({
+            "signature": "623S1QdSk31iYjC8MLn6FwPewWdQqsCtGUNifGMLsjfk1y6aFLbccPjypNKbA6b2V5MWipSaaYmUrKYNdSawJT9X",
+            "status": { "slot": 1u64, "executed": true, "err": null }
+        });
+        let (sig, slot) =
+            transfer_signature(cli_stdout).expect("real CLI success shape must parse");
+        assert_eq!(
+            sig,
+            "623S1QdSk31iYjC8MLn6FwPewWdQqsCtGUNifGMLsjfk1y6aFLbccPjypNKbA6b2V5MWipSaaYmUrKYNdSawJT9X"
+        );
+        assert_eq!(slot, Some(1));
+    }
+
+    /// executed=false ⇒ transfer not executed (pre-broadcast refund class).
+    #[test]
+    fn rejects_pending_status() {
+        let cli_stdout = serde_json::json!({
+            "signature": "623S1QdSk31iYjC8MLn6FwPewWdQqsCtGUNifGMLsjfk1y6aFLbccPjypNKbA6b2V5MWipSaaYmUrKYNdSawJT9X",
+            "status": { "slot": 1u64, "executed": false, "err": null }
+        });
+        let err = transfer_signature(cli_stdout)
+            .err()
+            .expect("pending must error");
+        assert_eq!(err.code, "RIALO_TRANSFER_ERROR");
+    }
+
+    /// err present ⇒ node-side definitive failure (same refund class),
+    /// and the message must carry the node's own error verbatim.
+    #[test]
+    fn rejects_chain_err_with_verbatim_text() {
+        let cli_stdout = serde_json::json!({
+            "signature": "623S1QdSk31iYjC8MLn6FwPewWdQqsCtGUNifGMLsjfk1y6aFLbccPjypNKbA6b2V5MWipSaaYmUrKYNdSawJT9X",
+            "status": { "slot": 1u64, "executed": false, "err": "insufficient kelvins for rent-exempt storage" }
+        });
+        let err = transfer_signature(cli_stdout)
+            .err()
+            .expect("chain err must error");
+        assert_eq!(err.code, "RIALO_TRANSFER_ERROR");
+        assert!(
+            err.detail
+                .contains("insufficient kelvins for rent-exempt storage")
+        );
+    }
+}
