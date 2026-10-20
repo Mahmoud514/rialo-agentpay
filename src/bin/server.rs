@@ -294,7 +294,10 @@ fn rialo_error_response(err: &RialoError) -> Response {
         // never blanket-stuff unknown-cause failures into 4xx per the G32
         // review rule: unknown infrastructure failures must not be
         // re-labelled as client faults merely to eliminate a 502).
-        let lower = err.detail.to_lowercase();
+        // G33 — match against the FIRST line only: multi-line CLI stderr
+        // can carry unrelated trailing context whose keywords must not
+        // leak into the classification of the primary refusal.
+        let lower = err.detail.lines().next().unwrap_or("").to_lowercase();
         if lower.contains("insufficient")
             || lower.contains("account not found")
             || lower.contains("account does not exist")
