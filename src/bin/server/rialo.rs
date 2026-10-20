@@ -3848,3 +3848,35 @@ mod transfer_signature_parity_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod g32_status_split_tests {
+    use super::*;
+
+    /// G32 — definitive client-actionable refusals (balance/rent/account
+    /// existence at send time) classify to 400-band codes.
+    #[test]
+    fn known_refusals_recognized() {
+        let cases = [
+            "insufficient lamports for transfer and fees",
+            "insufficient kelvins for the requested transfer",
+            "account not found: source wallet Unfunded1111",
+            "account does not exist on chain",
+            "no such account on this cluster",
+            "not owned by program: system program mismatch",
+        ];
+        for m in cases {
+            assert_eq!(classify(Operation::Transfer, m), "RIALO_ERROR", "{m}");
+        }
+    }
+
+    /// transient/plain unknown messages stay RIALO_ERROR too — the
+    /// distinction must happen at HTTP-mapping on detail-text, not here.
+    #[test]
+    fn unknown_messages_still_rialo_error() {
+        assert_eq!(
+            classify(Operation::Transfer, "weird custom refusal"),
+            "RIALO_ERROR"
+        );
+    }
+}

@@ -287,9 +287,24 @@ fn rialo_error_response(err: &RialoError) -> Response {
     } else if err.code == "RIALO_WALLET_ERROR" {
         StatusCode::INTERNAL_SERVER_ERROR
     } else {
-        // node refusals with real on-chain reasoning about THIS transaction:
-        // 400 with the node's verbatim detail preserved in the JSON body
-        StatusCode::BAD_REQUEST
+        // G32 correction — split the RIALO_ERROR bucket honestly:
+        // deterministically-known client-actionable refusals (balance/rent/
+        // account-missing at send time) ⇐ 400 with the node's verbatim
+        // detail preserved; EVERYTHING ELSE stays 502 (unknown upstream —
+        // never blanket-stuff unknown-cause failures into 4xx per the G32
+        // review rule: unknown infrastructure failures must not be
+        // re-labelled as client faults merely to eliminate a 502).
+        let lower = err.detail.to_lowercase();
+        if lower.contains("insufficient")
+            || lower.contains("account not found")
+            || lower.contains("account does not exist")
+            || lower.contains("no such account")
+            || lower.contains("not owned by program")
+        {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::BAD_GATEWAY
+        }
     };
     // G24 — server-side record for every rialo failure surfaced as 5xx: the
     // 502 investigation proved these details died in the HTTP body alone.
