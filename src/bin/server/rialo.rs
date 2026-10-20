@@ -1358,23 +1358,15 @@ impl RialoConfig {
             match self
                 .run(
                     Operation::Transfer,
-                    &[
-                        "client",
-                        "transfer",
-                        to,
-                        amount,
-                        path,
-                        // G29 — bound the CLI's internal confirmation wait
-                        // (the transfer subcommand has no --timeout today,
-                        // so a slow/unconfirmed chain holds the HTTP request
-                        // open until the edge proxy returns 502 HTML while
-                        // the tx may still land later). 20s stays inside the
-                        // platform's upstream budget. The uncertain-outcome
-                        // semantics on timeout are unchanged (hold + verify,
-                        // never auto-retry).
-                        "--timeout",
-                        "20000",
-                    ],
+                    // G39 — NO --timeout here: the vendor CLI 0.18.1 REJECTS
+                    // this flag for `client transfer` (proven live:
+                    // "error: unexpected argument '--timeout' found" — the
+                    // flag exists only on `client airdrop`). Passing it
+                    // would break EVERY direct payment at arg-parse. The
+                    // transfer's duration is instead bounded by the CLI's
+                    // internal confirmation-wait budget (measured ~2-4s per
+                    // pending poll in sink captures).
+                    &["client", "transfer", to, amount, path],
                 )
                 .and_then(transfer_signature)
             {
@@ -3552,16 +3544,16 @@ mod cli_diag_tests {
         assert!(!is_retryable_clock_skew("RIALO_ERROR"));
     }
 
-    /// G30 — deterministic deterministic proof of the timeout fix: the shim
-    /// FAILS if the CLI invocation does NOT carry `--timeout 20000`, then
-    /// (having received it) emits the vendor's own
+    /// G39 — corrected contract: the vendor CLI 0.18.1 REJECTS --timeout for
+    /// `client transfer` (proven live: "unexpected argument '--timeout'").
+    /// The shim FAILS if --timeout IS present, then emits the vendor's own
     /// "Transaction confirmation timed out" envelope. transfer() must end
     /// with RIALO_TRANSFER_CONFIRMATION_TIMEOUT (uncertain — hold, verify,
-    /// never report success, never blindly retry). One CLI call only.
+    /// never report success, never auto-retry). One CLI call only.
     #[test]
     fn accepted_then_pending_surfaces_confirmation_timeout_with_bounded_wait() {
         let dir = std::env::temp_dir().join(format!(
-            "g30-timeout-{}-{}",
+            "g39-notimeout-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -3571,34 +3563,41 @@ mod cli_diag_tests {
         std::fs::create_dir_all(&dir).unwrap();
         let seen = dir.join("seen-args");
         let script = r##"#!/bin/sh
-            # fail the whole test immediately if --timeout 20000 is absent
             found=0
-            prev=""
             for a in "$@"; do
-              if [ "$prev" = "--timeout" ] && [ "$a" = "20000" ]; then found=1; fi
-              prev="$a"
+              if [ "$a" = "--timeout" ]; then found=1; fi
             done
-            if [ "$found" -ne 1 ]; then
-              echo '{"success":false,"error":{"code":"SHIM_ASSERT","details":"missing --timeout 20000"}}'
+            if [ "$found" -eq 1 ]; then
+              echo '{"success":false,"error":{"code":"SHIM_ASSERT","details":"--timeout must NOT be passed (vendor CLI rejects it for transfer)"}}'
               exit 1
             fi
-            # bound the shim itself to the same budget: it must return the
-            # vendor timeout envelope within ~2-4s (internal confirm wait),
-            # never hang the caller
-            sleep 2
+            sleep 1
             echo '{"success":false,"message":"Transaction confirmation timed out"}'
         "##;
-        // splice the per-instance side-file path at runtime (no format! on
-        // the shell script — shell $vars conflict with format braces)
-        let script = script.replace("@@COUNT@@-", ""); // no-op keeps structure clear
-        let script = script.replace("@@CNT@@", &dir.join("seen-args").display().to_string());
-        let shim = Shim {
-            script: Box::leak(script.into_boxed_str()),
+        let path = dir.join("rialo");
+        // wrap in `sh` invocation via a loader script: WSL /tmp may be
+        // mounted noexec, breaking direct execution of tempdir binaries.
+        use std::os::unix::fs::PermissionsExt;
+        let real = dir.join("rialo-real.sh");
+        let mut f = std::fs::File::create(&real).unwrap();
+        f.write_all(script.as_bytes()).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let launcher = dir.join("rialo");
+        {
+            let mut f = std::fs::File::create(&launcher).unwrap();
+            f.write_all(format!("#!/bin/sh\nexec /bin/sh {} \"$@\"", real.display()).as_bytes())
+                .unwrap();
+        }
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cfg = RialoConfig {
+            cli: launcher,
+            rpc_url: "http://127.0.0.1:9".into(),
+            program_id: None,
+            program_dir: dir,
         };
-        let (cfg, _tmp) = shim.arm();
         let err = transfer_of(&cfg)
             .err()
-            .expect("pending-beyond-timeout must surface as error, never success");
+            .expect("pending-beyond-confirm must surface as error, never success");
         assert_eq!(
             err.code, "RIALO_TRANSFER_CONFIRMATION_TIMEOUT",
             "uncertain outcome class, not success and not definitive failure"
