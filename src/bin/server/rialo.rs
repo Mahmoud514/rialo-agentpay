@@ -1345,7 +1345,23 @@ impl RialoConfig {
             match self
                 .run(
                     Operation::Transfer,
-                    &["client", "transfer", to, amount, path],
+                    &[
+                        "client",
+                        "transfer",
+                        to,
+                        amount,
+                        path,
+                        // G29 — bound the CLI's internal confirmation wait
+                        // (the transfer subcommand has no --timeout today,
+                        // so a slow/unconfirmed chain holds the HTTP request
+                        // open until the edge proxy returns 502 HTML while
+                        // the tx may still land later). 20s stays inside the
+                        // platform's upstream budget. The uncertain-outcome
+                        // semantics on timeout are unchanged (hold + verify,
+                        // never auto-retry).
+                        "--timeout",
+                        "20000",
+                    ],
                 )
                 .and_then(transfer_signature)
             {
