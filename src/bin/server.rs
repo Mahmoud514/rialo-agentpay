@@ -313,14 +313,19 @@ fn rialo_error_response(err: &RialoError) -> Response {
     // 502 investigation proved these details died in the HTTP body alone.
     // Sanitized preview only (diag_text: first line, ≤200 chars, paths
     // neutralized); signature values are reported as presence, never logged.
+    let detail_preview = crate::rialo::diag_text(&err.detail);
     eprintln!(
         "[rialo-err] status={} op-code={} sig_evidence={} detail={}",
         status.as_u16(),
         err.code,
         err.tx_signature.is_some(),
-        crate::rialo::diag_text(&err.detail)
+        detail_preview
     );
-    api_error(status, err.code, &err.detail)
+    // G34 — the HTTP body carries the SAME sanitized preview: vendor CLI
+    // failure envelopes can embed internal keypair paths (proven:
+    // "Failed to load ... /app/artifact/wallets/<uid>.json" flows through
+    // the envelope into err.detail). Never emit the raw detail to clients.
+    api_error(status, err.code, &detail_preview)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
