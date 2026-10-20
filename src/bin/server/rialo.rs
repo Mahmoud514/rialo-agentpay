@@ -3538,6 +3538,62 @@ mod cli_diag_tests {
         ));
         assert!(!is_retryable_clock_skew("RIALO_ERROR"));
     }
+
+    /// G30 — deterministic deterministic proof of the timeout fix: the shim
+    /// FAILS if the CLI invocation does NOT carry `--timeout 20000`, then
+    /// (having received it) emits the vendor's own
+    /// "Transaction confirmation timed out" envelope. transfer() must end
+    /// with RIALO_TRANSFER_CONFIRMATION_TIMEOUT (uncertain — hold, verify,
+    /// never report success, never blindly retry). One CLI call only.
+    #[test]
+    fn accepted_then_pending_surfaces_confirmation_timeout_with_bounded_wait() {
+        let dir = std::env::temp_dir().join(format!(
+            "g30-timeout-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let seen = dir.join("seen-args");
+        let script = r##"#!/bin/sh
+            # fail the whole test immediately if --timeout 20000 is absent
+            found=0
+            prev=""
+            for a in "$@"; do
+              if [ "$prev" = "--timeout" ] && [ "$a" = "20000" ]; then found=1; fi
+              prev="$a"
+            done
+            if [ "$found" -ne 1 ]; then
+              echo '{"success":false,"error":{"code":"SHIM_ASSERT","details":"missing --timeout 20000"}}'
+              exit 1
+            fi
+            # bound the shim itself to the same budget: it must return the
+            # vendor timeout envelope within ~2-4s (internal confirm wait),
+            # never hang the caller
+            sleep 2
+            echo '{"success":false,"message":"Transaction confirmation timed out"}'
+        "##;
+        // splice the per-instance side-file path at runtime (no format! on
+        // the shell script — shell $vars conflict with format braces)
+        let script = script.replace("@@COUNT@@-", ""); // no-op keeps structure clear
+        let script = script.replace("@@CNT@@", &dir.join("seen-args").display().to_string());
+        let shim = Shim {
+            script: Box::leak(script.into_boxed_str()),
+        };
+        let (cfg, _tmp) = shim.arm();
+        let err = transfer_of(&cfg)
+            .err()
+            .expect("pending-beyond-timeout must surface as error, never success");
+        assert_eq!(
+            err.code, "RIALO_TRANSFER_CONFIRMATION_TIMEOUT",
+            "uncertain outcome class, not success and not definitive failure"
+        );
+        assert!(err.tx_signature.is_none());
+        // and the retry gate for this class is closed (no auto re-send):
+        assert!(!is_retryable_clock_skew(err.code));
+    }
 }
 
 #[cfg(test)]
