@@ -1351,7 +1351,17 @@ impl RialoConfig {
     ) -> Result<String, RialoError> {
         let path = keypair_path
             .to_str()
-            .ok_or_else(|| RialoError::plain("RIALO_ERROR", "non-utf8 wallet path".into()))?;
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| {
+                // G46 — never let the CLI fall through to its unconfigured
+                // `default` account alias (the proven production 502 root):
+                // a missing/unusable keypair path is a wallet-provisioning
+                // defect, surfaced as a typed 500 — operator remediation.
+                RialoError::plain(
+                    "RIALO_WALLET_ERROR",
+                    "WALLET_KEYPAIR_PATH_UNUSABLE: keypair path is empty or non-UTF-8; refusing CLI alias fallback".into(),
+                )
+            })?;
 
         let mut last_err = None;
         for attempt in 0..3u64 {
@@ -3904,5 +3914,55 @@ mod g32_status_split_tests {
             classify(Operation::Transfer, "weird custom refusal"),
             "RIALO_ERROR"
         );
+    }
+}
+
+#[cfg(test)]
+mod g46_keypair_path_guard_tests {
+    use super::*;
+
+    /// G46 — an empty keypair path must NEVER reach the CLI (which would
+    /// fall through to the unconfigured `default` alias — the proven prod
+    /// 502 root). It must surface as a typed wallet error instead.
+    #[test]
+    fn empty_keypair_path_rejected_before_cli() {
+        let cfg = RialoConfig {
+            cli: "/tmp/definitely-not-the-actual-cli-g46".into(),
+            rpc_url: "http://127.0.0.1:9".into(),
+            program_id: None,
+            program_dir: "/tmp".into(),
+        };
+        let err = cfg
+            .transfer(
+                &PathBuf::new(),
+                "BDEu6owtws5wsuJHxygJuXfFSM1RNgKvQuimeS5NxVBM",
+                "0.001",
+            )
+            .err()
+            .expect("empty path must error before any CLI invocation");
+        assert_eq!(err.code, "RIALO_WALLET_ERROR");
+        assert!(err.detail.contains("WALLET_KEYPAIR_PATH_UNUSABLE"));
+        // the shim/cli was NEVER spawned (no network attempt) — guaranteed
+        // by the error being raised before run() is called.
+    }
+
+    /// whitespace-only path is equally unusable.
+    #[test]
+    fn whitespace_keypair_path_rejected() {
+        let cfg = RialoConfig {
+            cli: "/tmp/definitely-not-the-actual-cli-g46".into(),
+            rpc_url: "http://127.0.0.1:9".into(),
+            program_id: None,
+            program_dir: "/tmp".into(),
+        };
+        let err = cfg
+            .transfer(
+                &PathBuf::from("   "),
+                "TargetAddr1111111111111111111111111111",
+                "0.001",
+            )
+            .err()
+            .expect("whitespace-only path must error");
+        assert_eq!(err.code, "RIALO_WALLET_ERROR");
     }
 }

@@ -124,7 +124,19 @@ function renderWalletCard(data) {
                 cache: "no-store",
             });
 
-            const result = await response.json();
+            // G38 — gateway front (Blitz/Cloudflare) can return an HTML 502
+            // page before the app responds. Parse only actual JSON; surface
+            // the HTTP status otherwise. Never parse <!doctype bodies.
+            const contentType = response.headers.get("content-type") || "";
+            let result = null;
+            if (contentType.includes("application/json")) {
+                result = await response.json();
+            } else {
+                const bodyText = await response.text();
+                throw new Error(
+                    `[HTTP ${response.status}] ${bodyText.slice(0, 120) || "non-JSON response"}`
+                );
+            }
 
             if (!response.ok || !result.success) {
                 throw new Error(
@@ -218,6 +230,11 @@ function wirePaymentForm() {
                 body: JSON.stringify({ to: recipient, amount }),
             });
 
+            // G38 — same gateway-HTML guard as the payment handler.
+            const contentType = response.headers.get("content-type") || "";
+            if (!contentType.includes("application/json")) {
+                throw new Error(`[HTTP ${response.status}] Gateway returned non-JSON response`);
+            }
             const result = await response.json();
 
             if (!response.ok || !result.success) {
