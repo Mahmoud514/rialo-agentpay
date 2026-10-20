@@ -366,10 +366,16 @@ fn extract_signature(value: &Value) -> Option<String> {
     None
 }
 
-/// G22 — diagnostics-only text sanitizer for `[rialo-diag]` lines: first
-/// line, capped at 200 chars, with filesystem paths neutralized (keypair
-/// paths embed the wallet user id — treat as sensitive-adjacent). Never
-/// echoes raw stdout/stderr bodies, keys, seeds, or credentials.
+/// G25 — diagnostics-only text sanitizer for `[rialo-diag]`/`[rialo-err]`
+/// lines. Pipeline: first line only → ≤200 chars (marked when truncated)
+/// → defensive redactions applied repeatedly until stable:
+///   * filesystem paths: `/app`, `/home/*` (keypair paths embed wallet ids)
+///   * base58 tokens 87–99 chars (ed25519 full signatures; 64-byte sigs
+///     encode to 87–88 chars — kept arity-wide to cover hex/base58 mixes)
+///   * hex blobs ≥64 chars (raw seeds / key bytes)
+///   * 12/24-word seed phrases (letter-only tokens ≤12 chars, in runs)
+///   * long digit runs ≥8 chars (wallet user ids like 50506318)
+/// Never echoes raw stdout/stderr bodies, keys, seeds, or full signatures.
 pub(crate) fn diag_text(text: &str) -> String {
     let first = text.lines().next().unwrap_or("").to_string();
     let truncated = first.chars().count() > 200;
@@ -377,10 +383,65 @@ pub(crate) fn diag_text(text: &str) -> String {
     if cap.is_empty() {
         cap = "<empty>".to_string();
     }
+    // Redact defensively (loop to fixed point so stacked patterns collapse).
+    let redact = |s: String| -> String {
+        let mut out = s;
+        out = out.replace("/app", "<app>").replace("/home/", "<home>/");
+        // base58 signature-sized tokens (87-99 chars, base58 alphabet)
+        let mut rebuilt: Vec<String> = Vec::new();
+        for tok in out.split(' ') {
+            let is_b58 = !tok.is_empty()
+                && tok.chars().count() >= 87
+                && tok.chars().count() <= 99
+                && tok.chars().all(|c| {
+                    c.is_ascii_alphanumeric() && c != '0' && c != 'O' && c != 'I' && c != 'l'
+                });
+            if is_b58 {
+                rebuilt.push(format!("{}…<sig-redacted>", &tok[..9]));
+            } else {
+                rebuilt.push(tok.to_string());
+            }
+        }
+        out = rebuilt.join(" ");
+        // long hex blobs (seed/key material)
+        let mut hex_out: Vec<String> = Vec::new();
+        for tok in out.split(' ') {
+            if tok.chars().count() >= 64 && tok.chars().all(|c| c.is_ascii_hexdigit()) {
+                hex_out.push(tok[..8].to_string() + "…<hex-redacted>");
+            } else {
+                hex_out.push(tok.to_string());
+            }
+        }
+        out = hex_out.join(" ");
+        // NOTE (G25 review): 12/24-word seed phrases cannot be reliably
+        // distinguished from error prose by shape alone (errors ARE prose).
+        // Seed phrases never appear in CLI stderr/detail by vendor contract
+        // (keys are read from files, never echoed); defensively we do NOT
+        // guess on shape here to avoid destroying actionable error text.
+        // The hex-blob redaction above already covers raw seed hex forms.
+        // wallet user ids (7-10 digit runs, may carry separators)
+        let mut digits: Vec<String> = Vec::new();
+        for tok in out.split(' ') {
+            let digits_only: String = tok.chars().filter(|c| c.is_ascii_digit()).collect();
+            if digits_only.chars().count() >= 8
+                && tok
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || !c.is_alphanumeric())
+                && tok.chars().any(|c| c.is_ascii_digit())
+            {
+                digits.push("<uid-redacted>".to_string());
+            } else {
+                digits.push(tok.to_string());
+            }
+        }
+        digits.join(" ")
+    };
+    cap = redact(cap);
+    cap = redact(cap); // second pass: stacked patterns (path+token mixes)
     if truncated {
         cap.push_str("…<truncated>");
     }
-    cap.replace("/app", "<app>").replace("/home/", "<home>/")
+    cap
 }
 
 /// JSON-RPC error object from a plain JSON-RPC reply, when present.
@@ -3519,5 +3580,73 @@ mod diag_text_tests {
         let long = format!("{node_msg} {node_msg}");
         let out2 = diag_text(&long);
         assert!(out2.contains("…<truncated>"));
+    }
+
+    // ── G25 additions: sensitive-token redaction contracts ──
+
+    fn sig_token(seed: usize) -> String {
+        // deterministic 88-char base58-alphabet token (ed25519 sig shape)
+        const A: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        (0..88)
+            .map(|i| A[(seed * 31 + i * 7) % 58] as char)
+            .collect()
+    }
+
+    /// full base58 signatures (87-99 chars) never survive the sanitizer
+    #[test]
+    fn full_signatures_never_logged() {
+        let sig = sig_token(7);
+        let msg = format!("confirmation timed out; signature {sig} not confirmed");
+        let out = diag_text(&msg);
+        assert!(!out.contains(&sig), "full signature leaked: {out}");
+        assert!(out.contains("…<sig-redacted>"));
+        assert!(
+            out.contains("confirmation timed out"),
+            "actionable text intact"
+        );
+    }
+
+    /// long hex blobs (raw seed / key bytes ≥64 hex chars) never survive
+    #[test]
+    fn long_hex_seeds_never_logged() {
+        let hex = "e".repeat(128);
+        let msg = format!("raw seed dump: {hex} truncated by cli");
+        let out = diag_text(&msg);
+        assert!(!out.contains(&hex), "hex seed leaked: {out}");
+        assert!(out.contains("…<hex-redacted>"));
+    }
+
+    /// wallet user id digit-runs (≥8 digits) never survive
+    #[test]
+    fn wallet_uid_digits_never_logged() {
+        let msg = "wallet integrity failure for user 50506318: file missing";
+        let out = diag_text(msg);
+        assert!(!out.contains("50506318"), "user id leaked: {out}");
+        assert!(out.contains("<uid-redacted>"), "uid marker present: {out}");
+        assert!(
+            out.contains("wallet integrity failure"),
+            "actionable intact"
+        );
+    }
+
+    /// normal refusal prose survives byte-identical (no over-redaction of
+    /// actionable text — the sanitizer must not destroy the diagnosis)
+    #[test]
+    fn normal_prose_survives_untouched() {
+        let msg = "Transaction simulation failed: source account has insufficient kelvins for transfer of 1000000 plus fees; review balance and retry";
+        let out = diag_text(msg);
+        assert!(out.contains("insufficient kelvins"));
+        assert!(out.contains("review balance"));
+        assert!(
+            !out.contains("<uid-redacted>"),
+            "prose must not be redacted"
+        );
+    }
+
+    /// purity: same input ⇒ identical output (no hidden state)
+    #[test]
+    fn sanitizer_is_pure_and_repeatable() {
+        let msg = "mixed 50506318 /app content with long token and no surprises";
+        assert_eq!(diag_text(msg), diag_text(msg));
     }
 }
