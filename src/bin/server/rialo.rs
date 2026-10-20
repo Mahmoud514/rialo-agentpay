@@ -419,22 +419,35 @@ pub(crate) fn diag_text(text: &str) -> String {
         // (keys are read from files, never echoed); defensively we do NOT
         // guess on shape here to avoid destroying actionable error text.
         // The hex-blob redaction above already covers raw seed hex forms.
-        // wallet user ids (7-10 digit runs, may carry separators)
-        let mut digits: Vec<String> = Vec::new();
-        for tok in out.split(' ') {
-            let digits_only: String = tok.chars().filter(|c| c.is_ascii_digit()).collect();
-            if digits_only.chars().count() >= 8
-                && tok
-                    .chars()
-                    .all(|c| c.is_ascii_digit() || !c.is_alphanumeric())
-                && tok.chars().any(|c| c.is_ascii_digit())
-            {
-                digits.push("<uid-redacted>".to_string());
+        // G34-fix — wallet user ids: replace ANY run of ≥8 consecutive
+        // digits (character level; catches embedded forms like
+        // /wallets/50506318.json which token-level checks miss) with a
+        // single marker covering the entire run.
+        let mut redacted_digits = String::with_capacity(out.len());
+        let mut run = String::new();
+        for ch in out.chars().chain(std::iter::once('\n')) {
+            if ch.is_ascii_digit() {
+                run.push(ch);
             } else {
-                digits.push(tok.to_string());
+                if run.chars().count() >= 8 {
+                    redacted_digits.push_str("<uid-redacted>");
+                } else {
+                    redacted_digits.push_str(&run);
+                }
+                run.clear();
+                if ch != '\n' {
+                    redacted_digits.push(ch);
+                }
             }
         }
-        digits.join(" ")
+        if !run.is_empty() {
+            if run.chars().count() >= 8 {
+                redacted_digits.push_str("<uid-redacted>");
+            } else {
+                redacted_digits.push_str(&run);
+            }
+        }
+        redacted_digits
     };
     cap = redact(cap);
     cap = redact(cap); // second pass: stacked patterns (path+token mixes)
@@ -3713,6 +3726,17 @@ mod diag_text_tests {
             !out.contains("<uid-redacted>"),
             "prose must not be redacted"
         );
+    }
+
+    /// G34-fix — uid embedded inside a longer token (keypair filename with
+    /// .json suffix) must be redacted at character level.
+    #[test]
+    fn embedded_uid_in_keypair_path_never_logged() {
+        let msg = r#"IO error: Failed to load from keypair from /app/artifact/wallets/50506318.json: No such file"#;
+        let out = diag_text(msg);
+        assert!(!out.contains("50506318"), "embedded uid leaked: {out}");
+        assert!(out.contains("<uid-redacted>"));
+        assert!(out.contains("keypair"), "actionable text intact");
     }
 
     /// purity: same input ⇒ identical output (no hidden state)
