@@ -366,6 +366,23 @@ fn extract_signature(value: &Value) -> Option<String> {
     None
 }
 
+/// G22 — diagnostics-only text sanitizer for `[rialo-diag]` lines: first
+/// line, capped at 200 chars, with filesystem paths neutralized (keypair
+/// paths embed the wallet user id — treat as sensitive-adjacent). Never
+/// echoes raw stdout/stderr bodies, keys, seeds, or credentials.
+pub(crate) fn diag_text(text: &str) -> String {
+    let first = text.lines().next().unwrap_or("").to_string();
+    let truncated = first.chars().count() > 200;
+    let mut cap: String = first.chars().take(200).collect();
+    if cap.is_empty() {
+        cap = "<empty>".to_string();
+    }
+    if truncated {
+        cap.push_str("…<truncated>");
+    }
+    cap.replace("/app", "<app>").replace("/home/", "<home>/")
+}
+
 /// JSON-RPC error object from a plain JSON-RPC reply, when present.
 fn jsonrpc_error(value: &Value) -> Option<&Value> {
     value.get("error")
@@ -3443,5 +3460,64 @@ mod cli_diag_tests {
             "RIALO_TRANSFER_CONFIRMATION_TIMEOUT"
         ));
         assert!(!is_retryable_clock_skew("RIALO_ERROR"));
+    }
+}
+
+#[cfg(test)]
+mod diag_text_tests {
+    use super::*;
+
+    /// G22 T-D1 — caps at 200 chars and marks truncation.
+    #[test]
+    fn caps_long_first_line() {
+        let long = "e".repeat(500);
+        let out = diag_text(&long);
+        assert!(out.starts_with("eeee"));
+        assert!(out.contains("…<truncated>"));
+        assert!(out.chars().count() <= 220);
+    }
+
+    /// T-D2 — empty/whitespace-only ⇒ <empty> marker (never blank log line).
+    #[test]
+    fn empty_becomes_marker() {
+        assert_eq!(diag_text(""), "<empty>");
+        assert_eq!(diag_text("\n\n"), "<empty>");
+    }
+
+    /// T-D3 — only the FIRST line is kept (multi-line CLI stderr bodies
+    /// may embed stack-ish details; we keep one line, capped).
+    #[test]
+    fn multiline_keeps_first_line_only() {
+        let out = diag_text("first line detail\nsecond line secret-ish\nthird");
+        assert!(out.starts_with("first line detail"));
+        assert!(!out.contains("second line"));
+    }
+
+    /// T-D4 — wallet path neutralization: /app + /home/ prefixes never
+    /// appear verbatim (keypair paths embed wallet user ids).
+    #[test]
+    fn paths_are_neutralized() {
+        let out = diag_text("failed to load keypair at /app/artifact/wallets/50506318.json");
+        assert!(!out.contains("/app/"), "raw /app path leaked: {out}");
+        assert!(out.contains("<app>"));
+
+        let out2 = diag_text("no config at /home/agentpay/.config/rialo");
+        assert!(!out2.contains("/home/agentpay"));
+        assert!(out2.contains("<home>/"));
+    }
+
+    /// T-D5 — a realistic node refusal travels through the sanitizer with
+    /// its actionable text intact (that is the whole point of G22), while
+    /// any path fragments inside it still get neutralized.
+    #[test]
+    fn node_refusal_keeps_actionable_text() {
+        let node_msg = "Transaction simulation failed: source account has insufficient kelvins for transfer of 1000000 plus fees under current cluster load; review balance and retry";
+        let out = diag_text(node_msg);
+        assert!(out.contains("insufficient kelvins"));
+        assert!(out.contains("review balance"));
+        // truncated-at-200 path proof:
+        let long = format!("{node_msg} {node_msg}");
+        let out2 = diag_text(&long);
+        assert!(out2.contains("…<truncated>"));
     }
 }
