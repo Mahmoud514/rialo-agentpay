@@ -3651,6 +3651,77 @@ mod diag_text_tests {
     }
 }
 
+/// G28 — the EXACT production failing shape (envelope_error, success:false,
+/// RPC_ERROR vendor envelope, no signature) asserted END-TO-END through
+/// run()+transfer(): error code, sig absence, and single-attempt (no retry
+/// for this class). This is the regression pin for the live 502 incident.
+#[cfg(test)]
+mod prod_envelope_regression_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    struct Shim<'a> {
+        script: &'a str,
+    }
+    impl Shim<'_> {
+        fn arm(&self) -> (RialoConfig, std::path::PathBuf) {
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "g28-env-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+                    + SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("rialo");
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(self.script.as_bytes()).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let cfg = RialoConfig {
+                cli: path,
+                rpc_url: "http://127.0.0.1:9".into(),
+                program_id: None,
+                program_dir: dir.clone(),
+            };
+            (cfg, dir)
+        }
+    }
+
+    /// THE production envelope: vendor CLI prints success:false RPC_ERROR
+    /// envelope (no signature) on stderr, exit 1, then dies. Server MUST
+    /// return RIALO_ERROR with the node's detail — the classification that
+    /// surfaced as the 394-byte 502 in production.
+    #[test]
+    fn prod_envelope_error_maps_to_rialo_error_with_detail() {
+        let (cfg, _d) = Shim { script: r##"#!/bin/sh
+            echo '{"success":false,"error":{"code":"RPC_ERROR","details":"node refused the transfer for account-level reasons"},"message":"node refused the transfer for account-level reasons"}' >&2
+            exit 1
+        "## }.arm();
+        let err = cfg
+            .run(
+                Operation::Transfer,
+                &["client", "transfer", "x", "0.001", "/kp"],
+            )
+            .err()
+            .expect("failure envelope must error");
+        assert_eq!(err.code, "RIALO_ERROR", "prod 502 class");
+        assert!(
+            err.tx_signature.is_none(),
+            "no signature in envelope ⇒ None"
+        );
+        assert!(
+            err.detail.contains("node refused the transfer"),
+            "node refusal text must be preserved in detail: {err:?}"
+        );
+        // and transfer() itself must NOT retry this class:
+        assert!(!is_retryable_clock_skew(err.code));
+    }
+}
+
 #[cfg(test)]
 mod transfer_signature_parity_tests {
     use super::*;
