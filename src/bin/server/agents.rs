@@ -11997,11 +11997,13 @@ mod agent_tests {
         ));
         assert_eq!(mock.transfer_calls().len(), 1);
 
-        // typed passthrough: 502 + original code (35)
+        // typed passthrough: CONFIRMATION_TIMEOUT is an UNCERTAIN outcome —
+        // G31 status mapping: 503 (transient infra class, hold + verify,
+        // never auto-retry); code preserved verbatim for the client.
         let (status, json) = rt(PaymentFailure::Transfer(rialo_mock_err(
             MockErr::ConfirmationTimeout,
         )));
-        assert_eq!(status, 502);
+        assert_eq!(status, 503);
         assert_eq!(json["error"]["code"], "RIALO_TRANSFER_CONFIRMATION_TIMEOUT");
         s.cleanup();
     }

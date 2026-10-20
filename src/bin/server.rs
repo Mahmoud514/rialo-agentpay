@@ -263,10 +263,33 @@ fn api_error(status: StatusCode, code: &str, detail: &str) -> Response {
 }
 
 fn rialo_error_response(err: &RialoError) -> Response {
-    let status = if err.is_rpc_down() {
+    // G31 — three-way status mapping with honest semantics:
+    //   * RIALO_RPC_UNAVAILABLE / _CLI_UNAVAILABLE / confirmation-timeout
+    //     ⇒ 503 SERVICE_UNAVAILABLE (transient infrastructure — retryable
+    //     later, never a client fault, never a tx result).
+    //   * RIALO_WALLET_ERROR ⇒ 500 INTERNAL (operator remediation required:
+    //     wallet integrity/registry issues are server-side state).
+    //   * everything else (RIALO_ERROR / RIALO_TRANSFER_ERROR / CLOCK_SKEW
+    //     / PROGRAM_ERROR — node refusals with real on-chain reasoning)
+    //     ⇒ 400 BAD_REQUEST: the node answered with a decision about THIS
+    //     transaction; the previous blanket 502 (a gateway-code for an
+    //     app-authored decision) is what muddied the original diagnosis.
+    //     The client still sees the full refusal detail through the JSON
+    //     error body — nothing is hidden or softened.
+    let status = if err.is_rpc_down()
+        || err.code == "RIALO_CLI_UNAVAILABLE"
+        || err.code == "RIALO_TRANSFER_CONFIRMATION_TIMEOUT"
+        || err.code == "RIALO_ERROR_CONFIRMATION_UNKNOWN"
+    {
+        // transient-infrastructure / uncertainty band: retryable later, never
+        // a client fault, never a tx verdict (hold + on-chain verify instead)
         StatusCode::SERVICE_UNAVAILABLE
+    } else if err.code == "RIALO_WALLET_ERROR" {
+        StatusCode::INTERNAL_SERVER_ERROR
     } else {
-        StatusCode::BAD_GATEWAY
+        // node refusals with real on-chain reasoning about THIS transaction:
+        // 400 with the node's verbatim detail preserved in the JSON body
+        StatusCode::BAD_REQUEST
     };
     // G24 — server-side record for every rialo failure surfaced as 5xx: the
     // 502 investigation proved these details died in the HTTP body alone.
