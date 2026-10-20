@@ -268,6 +268,17 @@ fn rialo_error_response(err: &RialoError) -> Response {
     } else {
         StatusCode::BAD_GATEWAY
     };
+    // G24 — server-side record for every rialo failure surfaced as 5xx: the
+    // 502 investigation proved these details died in the HTTP body alone.
+    // Sanitized preview only (diag_text: first line, ≤200 chars, paths
+    // neutralized); signature values are reported as presence, never logged.
+    eprintln!(
+        "[rialo-err] status={} op-code={} sig_evidence={} detail={}",
+        status.as_u16(),
+        err.code,
+        err.tx_signature.is_some(),
+        crate::rialo::diag_text(&err.detail)
+    );
     api_error(status, err.code, &err.detail)
 }
 
