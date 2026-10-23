@@ -808,8 +808,12 @@ fn hierarchy_resolution_wired_only_at_the_two_money_cores() {
     // pin asserts the three CONSUMERS by their surrounding context
     // instead of a raw production-slice count.
     assert!(
-        src.contains("match resolve_effective_policy("),
-        "v1 lane resolves"
+        src.contains("resolve_effective_policy_for_agent_pg(policy, &uuid)"),
+        "v1 PG lane resolves"
+    );
+    assert!(
+        src.contains("resolve_effective_policy(policy, &agent_policies_dir(), &agents_dir())"),
+        "v1 FS lane resolves"
     );
     assert!(
         src.contains("crate::agents::resolve_effective_policy(child_policy"),
