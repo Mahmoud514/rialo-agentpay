@@ -93,13 +93,6 @@ const AgentPayActivity = (() => {
         return "—";
     }
 
-    function shortSig(sig) {
-        if (!sig) return null;
-        const s = String(sig);
-        if (s.length <= 24) return s;
-        return `${s.slice(0, 12)}…${s.slice(-8)}`;
-    }
-
     // Whitelisted correlation: the DTO exposes the idempotency slot (always)
     // and the intent id (v2 records only). The slot is a hex-encoded
     // idempotency key — decoded for display, never stored or sent anywhere.
@@ -116,11 +109,11 @@ const AgentPayActivity = (() => {
     }
 
     function correlationLabel(item) {
-        if (item.intent_id) return `intent ${shortSig(item.intent_id)}`;
+        if (item.intent_id) return `intent ${item.intent_id}`;
         if (item.idempotency_slot) {
             const decoded = hexToText(item.idempotency_slot);
             const label = decoded || item.idempotency_slot;
-            return `slot ${label.length > 24 ? shortSig(label) : label}`;
+            return `slot ${label}`;
         }
         return null;
     }
@@ -220,7 +213,7 @@ const AgentPayActivity = (() => {
 
         const sigCell =
             sig
-                ? `<span class="act-row__sig mono" title="transaction signature: ${esc(sig)}">${esc(shortSig(sig))}</span>`
+                ? `<span class="act-row__sig mono" title="transaction signature: ${esc(sig)}">${esc(sig)}</span>`
                 : `<span class="act-row__sig mono">${fail ? "" : "no signature"}</span>`;
         const corrContent = [corr, fail].filter(Boolean).join(" · ");
         const corrLabel = fail
