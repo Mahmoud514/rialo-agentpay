@@ -74,6 +74,13 @@ RUN chmod 0755 /opt/rialo-cli/rialo \
 # Static frontend is served by the same process (ServeDir; no build step).
 COPY frontend/src/ /app/frontend/src/
 
+# The deployed Venus program's validated artifact manifest. Path-only config;
+# no program key material or wallet state is included. The deployable
+# `program/wit/` is deliberately separate from the repo-root `wit/`: the root
+# manifest still carries the legacy subscriber_interface slot and is rejected
+# by the server's account-order guard.
+COPY program/ /app/program/
+
 # Writable state root (agent records / stray mode-fs locals). Funded wallet
 # keypairs are NEVER included (see .dockerignore) — the isolated signer
 # stays OUT of this image by design.
@@ -90,6 +97,11 @@ ENV SERVER_ADDR=0.0.0.0:8000
 # CI-proven (transfer-killswitch-enabled job): 503 TRANSFERS_DISABLED
 # before any balance read, reservation, signing, or submission.
 ENV AGENTPAY_DISABLE_TRANSFERS=1
+
+# Validated Venus manifest location. The program ID and any payment cap remain
+# operator-controlled environment values; this only makes the artifact
+# manifest available to the readiness check.
+ENV AGENTPAY_PROGRAM_DIR=/app/program
 
 EXPOSE 8000
 
