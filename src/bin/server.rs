@@ -620,7 +620,9 @@ async fn main() {
         )
         .route(
             "/api/agents/{id}",
-            get(agents::get_agent).patch(agents::patch_agent),
+            get(agents::get_agent)
+                .patch(agents::patch_agent)
+                .delete(agents::delete_agent),
         )
         .route("/api/agents/{id}/balance", get(agents::agent_balance))
         .route("/api/agents/{id}/status", patch(agents::patch_agent_status))
