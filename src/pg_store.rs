@@ -3744,7 +3744,7 @@ pub async fn policy_patch_pg_full(
                  daily_payment_limit_kelvin, allowed_recipients, allowed_actions, \
                  parent_agent_id, delegation_revoked, aggregate_daily_limit_kelvin, \
                  created_at, updated_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($11, $10), $10) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($11::BIGINT, $10), $10) \
                  ON CONFLICT (agent_id) DO UPDATE SET \
                  schema_version = EXCLUDED.schema_version, \
                  max_payment_per_tx_kelvin = EXCLUDED.max_payment_per_tx_kelvin, \
