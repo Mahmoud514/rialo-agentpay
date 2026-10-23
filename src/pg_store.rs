@@ -463,22 +463,29 @@ type PgClientGuard = tokio::sync::MutexGuard<'static, PgClient>;
 static PG_CLIENT: OnceLock<tokio::sync::Mutex<PgClient>> = OnceLock::new();
 
 /// The tokio-recommended pattern for calling async PG code from a sync
-/// context inside `spawn_blocking`: `Handle::current().block_on()`.
-/// tokio propagates the task context (including the Handle) into
-/// spawn_blocking, so Handle::current() returns the MAIN runtime's handle.
-/// `block_on` on that handle blocks the CALLING thread (the spawn_blocking
-/// thread) while the I/O runs on the main runtime's reactor. No nested
-/// runtime is created (the nested pattern caused a deadlock: the shared
-/// connection's driver ran on a different runtime than the block_on, so
-/// the response was never delivered).
+/// dispatch: `block_in_place` + `Handle::block_on` on the multi-thread
+/// server runtime. `tokio` propagates the task context (including the
+/// Handle) into both async workers and `spawn_blocking` closures.
+/// `block_in_place` moves the worker's other tasks off this thread before
+/// parking it for the PG round-trip; `block_on` then drives the future on
+/// the main reactor. No nested runtime is created.
 ///
-/// IMPORTANT: this function must ONLY be called from within a tokio
-/// spawn_blocking context (or any context where Handle::current() resolves).
-/// Outside a runtime, it returns an error (fail closed).
+/// This function is valid from an async axum handler (e.g. GET /api/agents)
+/// and from a `spawn_blocking` closure. Calling it outside a runtime returns
+/// an error (fail closed); a current-thread runtime is not supported
+/// (`block_in_place` panics there, while the server uses the multi-thread
+/// `#[tokio::main]` runtime).
 pub(crate) fn pg_run<F: std::future::Future>(fut: F) -> Result<F::Output, StoreError> {
     let handle = tokio::runtime::Handle::try_current()
         .map_err(|_| StoreError::Db("no tokio runtime available for PG access".into()))?;
-    Ok(handle.block_on(fut))
+    // `Handle::block_on` panics if it is called directly from an async
+    // worker ("Cannot start a runtime from within a runtime"). Several
+    // async axum handlers (notably `GET /api/agents`) call this synchronous
+    // dispatch directly, while other callers run it inside
+    // `spawn_blocking`. `block_in_place` is valid from both contexts on the
+    // server's multi-thread runtime: it moves the worker's other tasks off
+    // this thread before parking it for the PG round-trip.
+    Ok(tokio::task::block_in_place(|| handle.block_on(fut)))
 }
 
 /// The MAIN tokio runtime handle (captured at startup by init_blocking).
@@ -7480,5 +7487,30 @@ mod reconnect_integration_tests {
             .expect("count (fallback)")
             .get("n");
         assert_eq!(n, 1, "no duplicate writes after retry (fallback)");
+    }
+}
+
+#[cfg(test)]
+mod pg_run_context_tests {
+    use super::pg_run;
+
+    /// Regression: async axum handlers call this sync PG dispatch directly.
+    /// `Handle::block_on` alone panics from a runtime worker; `pg_run` must
+    /// use the block-in-place path instead.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn direct_async_caller_does_not_panic() {
+        let value = pg_run(async { 7u8 }).expect("runtime context");
+        assert_eq!(value, 7);
+    }
+
+    /// The same helper is also called from `spawn_blocking` closures; the
+    /// block-in-place path must remain valid there too.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_blocking_caller_does_not_panic() {
+        let value = tokio::task::spawn_blocking(|| pg_run(async { 9u8 }))
+            .await
+            .expect("join")
+            .expect("runtime context");
+        assert_eq!(value, 9);
     }
 }
