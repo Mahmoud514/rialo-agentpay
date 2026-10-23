@@ -5141,7 +5141,16 @@ pub async fn agent_payment(
         };
     let policy = match policy_result {
         Ok(Some(policy)) => {
-            match resolve_effective_policy(policy, &agent_policies_dir(), &agents_dir()) {
+            let resolved = if crate::pg_store::pg_is_authoritative() {
+                // Production authority is PG: resolve the frozen hierarchy
+                // from PG agent/policy rows. The filesystem walker would
+                // fail on a perfectly valid PG-only root policy and deny
+                // every payment with AGENT_POLICY_MISSING.
+                resolve_effective_policy_for_agent_pg(policy, &uuid)
+            } else {
+                resolve_effective_policy(policy, &agent_policies_dir(), &agents_dir())
+            };
+            match resolved {
                 Ok(effective) => effective,
                 Err(_) => {
                     audit_authorization(

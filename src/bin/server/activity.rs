@@ -720,6 +720,17 @@ pub(crate) fn render_activity_in(
         }
     }
 
+    finalize_activity(scanned, id, q)
+}
+
+/// Apply the fixed ordering, filters, cursor, page bound, and DTO mapping to
+/// an already-scanned slot set. Shared by the filesystem and PG projections
+/// so their pagination/filter semantics cannot drift.
+fn finalize_activity(
+    mut scanned: Vec<ScannedSlot>,
+    id: &Uuid,
+    q: &ActivityQuery,
+) -> ActivityOutcome {
     // fixed deterministic order: created_at DESC, tie-break key_hex ASC
     scanned.sort_by(|a, b| {
         b.facts
@@ -763,6 +774,62 @@ pub(crate) fn render_activity_in(
         None
     };
     ActivityOutcome::Rendered(page, next_cursor)
+}
+
+/// PG-authoritative activity projection. Production's authoritative ledger
+/// is `payment_intents`; the filesystem directory is empty there. Build the
+/// same `ScannedSlot` set from the DB docs, then use the shared finalizer.
+async fn render_activity_pg(id: &Uuid, q: &ActivityQuery) -> ActivityOutcome {
+    let client = crate::pg_store::global_client().await;
+    let rows = match client
+        .query(
+            "SELECT idempotency_key, doc FROM payment_intents WHERE agent_id = $1",
+            &[id],
+        )
+        .await
+    {
+        Ok(rows) => rows,
+        Err(_) => return ActivityOutcome::Store,
+    };
+    let mut scanned: Vec<ScannedSlot> = Vec::new();
+    for row in rows {
+        let key: String = row.get(0);
+        let doc: serde_json::Value = row.get(1);
+        let key_hex = crate::agents::hex_encode(key.as_bytes());
+        match doc.get("schema_version").and_then(|v| v.as_u64()) {
+            Some(1) => {
+                let Ok(intent) = serde_json::from_value::<crate::agents::PaymentIntent>(doc) else {
+                    return ActivityOutcome::Store;
+                };
+                if intent.agent_id != id.to_string() || intent.idempotency_key != key {
+                    return ActivityOutcome::Store;
+                }
+                let slot = Slot::V1(intent);
+                scanned.push(ScannedSlot {
+                    key_hex,
+                    facts: slot_facts(&slot),
+                    slot,
+                });
+            }
+            Some(2) => {
+                let Ok(intent) = serde_json::from_value::<crate::agents::PaymentIntentV2>(doc)
+                else {
+                    return ActivityOutcome::Store;
+                };
+                if intent.agent_id != id.to_string() || intent.idempotency_key != key {
+                    return ActivityOutcome::Store;
+                }
+                let slot = Slot::V2(intent);
+                scanned.push(ScannedSlot {
+                    key_hex,
+                    facts: slot_facts(&slot),
+                    slot,
+                });
+            }
+            _ => continue, // foreign/unknown document: inert, never activity
+        }
+    }
+    finalize_activity(scanned, id, q)
 }
 
 pub(crate) fn hex_decode(input: &str) -> Option<String> {
@@ -838,8 +905,18 @@ pub async fn agent_activity(
         Ok(q) => q,
         Err(reason) => return request_invalid(&reason),
     };
-    let root = crate::agents::intents_root();
-    let outcome = render_activity_in(&root, &uuid, &q);
+    let outcome = if crate::pg_store::pg_is_authoritative() {
+        // Production authority is PostgreSQL; the filesystem ledger is
+        // empty there. A DB/runtime error is fail-closed, never a partial
+        // or empty page.
+        match crate::pg_store::pg_run(render_activity_pg(&uuid, &q)) {
+            Ok(outcome) => outcome,
+            Err(_) => ActivityOutcome::Store,
+        }
+    } else {
+        let root = crate::agents::intents_root();
+        render_activity_in(&root, &uuid, &q)
+    };
     activity_http(outcome, &agent.agent_id, &q)
 }
 
