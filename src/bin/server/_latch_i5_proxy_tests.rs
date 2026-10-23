@@ -292,7 +292,7 @@ impl FakeCli {
         // Plain concatenation: the success payload carries braces and
         // quotes and must NOT pass through format! escaping at all.
         let payload = "{\"signature\":\"5FakeCliSignatureAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"status\":{\"slot\":42,\"executed\":true,\"err\":null}}";
-        let content = "#!/bin/sh\nprintf 'call %s\\n' \"$2\" >> '".to_string()
+        let content = "#!/bin/sh\nurl=''\nprev=''\nfor arg in \"$@\"; do\n  if [ \"$prev\" = \"--url\" ]; then url=\"$arg\"; fi\n  prev=\"$arg\"\ndone\nprintf 'call %s\\n' \"$url\" >> '".to_string()
             + &calls.display().to_string()
             + "'\nprintf '%s\\n' '"
             + payload

@@ -1363,13 +1363,68 @@ impl RialoConfig {
                 )
             })?;
 
+        // G113.10 — CLI 0.18.1 resolves the signing account from
+        // `current_account` in config.toml before considering the optional
+        // FROM positional. A host HOME/config can therefore make a perfectly
+        // valid wallet file resolve to the unconfigured `default` alias
+        // (observed live: "No keypair configured for account alias
+        // 'default'"). Use the same path-only, ephemeral keyring config as
+        // the program lane: no key material is copied, read, or logged, and
+        // the temporary directory is removed after every outcome.
+        let wallet_path =
+            std::fs::canonicalize(keypair_path).unwrap_or_else(|_| keypair_path.clone());
+        let wallet_str = wallet_path
+            .to_str()
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| {
+                RialoError::plain(
+                    "RIALO_WALLET_ERROR",
+                    "WALLET_KEYPAIR_PATH_UNUSABLE: keypair path is non-UTF-8; refusing CLI alias fallback".into(),
+                )
+            })?;
+        let ring_dir = std::env::temp_dir().join(format!(
+            "agentpay-transfer-keyring-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&ring_dir).map_err(|e| {
+            RialoError::plain(
+                "RIALO_WALLET_ERROR",
+                format!("WALLET_KEYPAIR_PATH_UNUSABLE: cannot create keyring directory: {e}"),
+            )
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&ring_dir, std::fs::Permissions::from_mode(0o700));
+        }
+        let config_toml = format!(
+            "[cli]\ncurrent_account = \"agentpay-user\"\n\n[cli.keypair_paths]\nagentpay-user = \"{}\"\n",
+            wallet_str
+        );
+        if let Err(e) = std::fs::write(ring_dir.join("config.toml"), config_toml) {
+            let _ = std::fs::remove_dir_all(&ring_dir);
+            return Err(RialoError::plain(
+                "RIALO_WALLET_ERROR",
+                format!("WALLET_KEYPAIR_PATH_UNUSABLE: cannot write keyring config: {e}"),
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(
+                ring_dir.join("config.toml"),
+                std::fs::Permissions::from_mode(0o600),
+            );
+        }
+
         let mut last_err = None;
         for attempt in 0..3u64 {
             if attempt > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(400 * attempt));
             }
             match self
-                .run(
+                .run_with_config_dir(
+                    Some(&ring_dir),
                     Operation::Transfer,
                     // G39 — NO --timeout here: the vendor CLI 0.18.1 REJECTS
                     // this flag for `client transfer` (proven live:
@@ -1383,7 +1438,10 @@ impl RialoConfig {
                 )
                 .and_then(transfer_signature)
             {
-                Ok((signature, _slot)) => return Ok(signature),
+                Ok((signature, _slot)) => {
+                    let _ = std::fs::remove_dir_all(&ring_dir);
+                    return Ok(signature);
+                }
                 Err(err) => {
                     let retryable = is_retryable_clock_skew(err.code);
                     last_err = Some(err);
@@ -1393,6 +1451,7 @@ impl RialoConfig {
                 }
             }
         }
+        let _ = std::fs::remove_dir_all(&ring_dir);
         // All attempts failed: the final error (RIALO_CLOCK_SKEW if that is
         // what it was) is returned unchanged — never rewritten.
         Err(last_err
@@ -3920,6 +3979,33 @@ mod g32_status_split_tests {
 #[cfg(test)]
 mod g46_keypair_path_guard_tests {
     use super::*;
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn shim(script: &str) -> (RialoConfig, std::path::PathBuf) {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "g1139-keyring-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rialo");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(script.as_bytes()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cfg = RialoConfig {
+            cli: path,
+            rpc_url: "http://127.0.0.1:9".into(),
+            program_id: None,
+            program_dir: dir.clone(),
+        };
+        (cfg, dir)
+    }
 
     /// G46 — an empty keypair path must NEVER reach the CLI (which would
     /// fall through to the unconfigured `default` alias — the proven prod
@@ -3964,5 +4050,46 @@ mod g46_keypair_path_guard_tests {
             .err()
             .expect("whitespace-only path must error");
         assert_eq!(err.code, "RIALO_WALLET_ERROR");
+    }
+
+    /// G113.10 — transfer must bind the wallet through an ephemeral
+    /// config.toml (current_account + keypair_paths), not rely on the
+    /// host's `default` alias or the optional FROM positional. The shim
+    /// proves the `-c <dir>` argument and the path-only config contents.
+    #[test]
+    fn transfer_uses_ephemeral_keyring_config() {
+        let script = r##"#!/bin/sh
+            dir=""
+            prev=""
+            for arg in "$@"; do
+              if [ "$prev" = "-c" ]; then dir="$arg"; fi
+              prev="$arg"
+            done
+            if [ -z "$dir" ] || [ ! -f "$dir/config.toml" ]; then
+              echo '{"success":false,"message":"missing ephemeral keyring config"}'
+              exit 1
+            fi
+            grep -q 'current_account = "agentpay-user"' "$dir/config.toml" || {
+              echo '{"success":false,"message":"missing current_account"}'
+              exit 1
+            }
+            grep -q 'agentpay-user = "' "$dir/config.toml" || {
+              echo '{"success":false,"message":"missing keypair path"}'
+              exit 1
+            }
+            echo '{"signature":"623S1QdSk31iYjC8MLn6FwPewWdQqsCtGUNifGMLsjfk1y6aFLbccPjypNKbA6b2V5MWipSaaYmUrKYNdSawJT9X","status":{"executed":true,"slot":1}}'
+        "##;
+        let (cfg, _tmp) = shim(script);
+        let sig = cfg
+            .transfer(
+                &PathBuf::from("/tmp/g25-ignored-keypair.json"),
+                "BDEu6owtws5wsuJHxygJuXfFSM1RNgKvQuimeS5NxVBM",
+                "0.001",
+            )
+            .expect("shim must see the ephemeral keyring config");
+        assert_eq!(
+            sig,
+            "623S1QdSk31iYjC8MLn6FwPewWdQqsCtGUNifGMLsjfk1y6aFLbccPjypNKbA6b2V5MWipSaaYmUrKYNdSawJT9X"
+        );
     }
 }
