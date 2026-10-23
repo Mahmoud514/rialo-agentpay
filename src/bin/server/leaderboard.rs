@@ -329,6 +329,25 @@ fn sort_rows(rows: &mut Vec<(crate::agents::Agent, Metrics)>) {
     });
 }
 
+/// Build the public DTO for one row. Kept in one place so the filesystem
+/// projection and the PG-authoritative projection can never drift.
+fn row_json(agent: &crate::agents::Agent, m: &Metrics) -> serde_json::Value {
+    serde_json::json!({
+        "agent_id": agent.agent_id,
+        "name": agent.name,
+        "status": agent_status_name(agent.status),
+        "total_intent_count": m.total,
+        "confirmed_payment_count": m.confirmed,
+        "confirmed_payment_volume_kelvin": m.volume_kelvin,
+        "confirmed_payment_volume_rlo": m.volume_kelvin as f64 / 1_000_000_000.0,
+        "last_confirmed_at": m.last_confirmed_at,
+        "pending_count": m.pending,
+        "failed_count": m.failed,
+        "unknown_count": m.unknown,
+        "reconciled_count": m.reconciled,
+    })
+}
+
 /// Build the full projection (HTTP-free) so tests can drive it directly
 /// with temp dir trees. `user_id` is the authenticated caller.
 pub(crate) fn render_leaderboard_in(
@@ -358,26 +377,7 @@ pub(crate) fn render_leaderboard_in(
     }
     sort_rows(&mut rows);
 
-    LeaderboardOutcome::Rendered(
-        rows.iter()
-            .map(|(agent, m)| {
-                serde_json::json!({
-                    "agent_id": agent.agent_id,
-                    "name": agent.name,
-                    "status": agent_status_name(agent.status),
-                    "total_intent_count": m.total,
-                    "confirmed_payment_count": m.confirmed,
-                    "confirmed_payment_volume_kelvin": m.volume_kelvin,
-                    "confirmed_payment_volume_rlo": m.volume_kelvin as f64 / 1_000_000_000.0,
-                    "last_confirmed_at": m.last_confirmed_at,
-                    "pending_count": m.pending,
-                    "failed_count": m.failed,
-                    "unknown_count": m.unknown,
-                    "reconciled_count": m.reconciled,
-                })
-            })
-            .collect(),
-    )
+    LeaderboardOutcome::Rendered(rows.iter().map(|(agent, m)| row_json(agent, m)).collect())
 }
 
 /// Map the lifecycle enum to its canonical lowercase public name (the same
@@ -391,6 +391,59 @@ fn agent_status_name(status: crate::agents::AgentStatus) -> &'static str {
         S::Disabled => "disabled",
         S::Deleted => "deleted",
     }
+}
+
+/// PG-authoritative projection. Production runs PG as the single
+/// authority, so the filesystem scan above is never a valid substitute:
+/// it would report an empty board for agents that only exist in PG. Read
+/// the owned agent rows and the authoritative `payment_intents` rows, fold
+/// them through the same `observe` classifier, and use the same total
+/// order/DTO.
+async fn render_leaderboard_pg(user_id: u64) -> LeaderboardOutcome {
+    use crate::agents::{IntentState, parse_agent_id};
+
+    let agents = match crate::pg_store::agents_list_for_owner_dispatch(user_id).await {
+        Ok(agents) => agents,
+        Err(_) => return LeaderboardOutcome::Store,
+    };
+    let client = crate::pg_store::global_client().await;
+    let mut rows: Vec<(crate::agents::Agent, Metrics)> = Vec::with_capacity(agents.len());
+
+    for agent in agents {
+        let Some(id) = parse_agent_id(&agent.agent_id) else {
+            return LeaderboardOutcome::Store;
+        };
+        let intents = match client
+            .query(
+                "SELECT state, amount_kelvin, updated_at FROM payment_intents \
+                 WHERE agent_id = $1",
+                &[&id],
+            )
+            .await
+        {
+            Ok(rows) => rows,
+            Err(_) => return LeaderboardOutcome::Store,
+        };
+        let mut m = Metrics::default();
+        for row in intents {
+            let state_name: String = row.get(0);
+            let state = match serde_json::from_value::<IntentState>(
+                serde_json::Value::String(state_name),
+            ) {
+                Ok(state) => state,
+                Err(_) => return LeaderboardOutcome::Store,
+            };
+            let amount_i64: i64 = row.get(1);
+            let Ok(amount_kelvin) = u64::try_from(amount_i64) else {
+                return LeaderboardOutcome::Store;
+            };
+            let updated_at: i64 = row.get(2);
+            observe(&mut m, state, amount_kelvin, updated_at);
+        }
+        rows.push((agent, m));
+    }
+    sort_rows(&mut rows);
+    LeaderboardOutcome::Rendered(rows.iter().map(|(agent, m)| row_json(agent, m)).collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -413,15 +466,34 @@ pub async fn agent_leaderboard(
             "Not logged in",
         );
     };
-    let (agents_dir_path, intents_root) =
-        (crate::agents::agents_dir(), crate::agents::intents_root());
     let user_id = user.id;
-    let result = tokio::task::spawn_blocking(move || {
-        render_leaderboard_in(&agents_dir_path, &intents_root, user_id)
-    })
-    .await;
-    match result {
-        Ok(LeaderboardOutcome::Rendered(rows)) => (
+    let outcome = if crate::pg_store::pg_is_authoritative() {
+        // Production authority is PostgreSQL: never fall back to the
+        // filesystem ledger, which does not contain these agents.
+        match crate::pg_store::pg_run(render_leaderboard_pg(user_id)) {
+            Ok(outcome) => outcome,
+            Err(_) => LeaderboardOutcome::Store,
+        }
+    } else {
+        let (agents_dir_path, intents_root) =
+            (crate::agents::agents_dir(), crate::agents::intents_root());
+        match tokio::task::spawn_blocking(move || {
+            render_leaderboard_in(&agents_dir_path, &intents_root, user_id)
+        })
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(join_err) => {
+                return crate::api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "RIALO_ERROR",
+                    &format!("leaderboard worker failed: {join_err}"),
+                );
+            }
+        }
+    };
+    match outcome {
+        LeaderboardOutcome::Rendered(rows) => (
             StatusCode::OK,
             axum::Json(serde_json::json!({
                 "success": true,
@@ -431,15 +503,10 @@ pub async fn agent_leaderboard(
             })),
         )
             .into_response(),
-        Ok(LeaderboardOutcome::Store) => crate::api_error(
+        LeaderboardOutcome::Store => crate::api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "AGENT_STORE_ERROR",
             "Leaderboard could not be read completely; a partial board is never shown",
-        ),
-        Err(join_err) => crate::api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "RIALO_ERROR",
-            &format!("leaderboard worker failed: {join_err}"),
         ),
     }
 }
