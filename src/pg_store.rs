@@ -3704,12 +3704,14 @@ pub async fn policy_read_pg_pub(
 
 /// Authoritative full-replacement policy write for the PATCH handler. One
 /// transaction: lock the owned agents row (the ownership anchor), then
-/// update EVERY policy column from the validated record (full-replacement
+/// upsert EVERY policy column from the validated record (full-replacement
 /// semantics: omitted fields were already folded into the validated record
 /// by the pure validator; an explicit clear is expressed by the record's
-/// NULL fields). The revocation stamp is written as given — the handler's
-/// linkage logic decides it, so a stale PATCH cannot un-revoke. Ok(false) =
-/// missing/foreign agent OR no policy row (fail-closed; never an upsert).
+/// NULL fields). A draft agent has no policy row until its first save, so
+/// the first valid PATCH creates the row atomically; later PATCHes replace
+/// it. The revocation stamp is written as given — the handler's linkage
+/// logic decides it, so a stale PATCH cannot un-revoke. Ok(false) =
+/// missing/foreign agent.
 pub async fn policy_patch_pg_full(
     agent_id: uuid::Uuid,
     owner_user_id: u64,
@@ -3736,12 +3738,23 @@ pub async fn policy_patch_pg_full(
             let _ = tx.rollback().await;
             return Ok(false);
         }
-        let updated = tx
+        let written = tx
             .execute(
-                "UPDATE agent_policies SET schema_version = $2, max_payment_per_tx_kelvin = $3, \
-                 daily_payment_limit_kelvin = $4, allowed_recipients = $5, allowed_actions = $6, \
-                 parent_agent_id = $7, delegation_revoked = $8, aggregate_daily_limit_kelvin = $9, \
-                 updated_at = $10 WHERE agent_id = $1",
+                "INSERT INTO agent_policies (agent_id, schema_version, max_payment_per_tx_kelvin, \
+                 daily_payment_limit_kelvin, allowed_recipients, allowed_actions, \
+                 parent_agent_id, delegation_revoked, aggregate_daily_limit_kelvin, \
+                 created_at, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($11, $10), $10) \
+                 ON CONFLICT (agent_id) DO UPDATE SET \
+                 schema_version = EXCLUDED.schema_version, \
+                 max_payment_per_tx_kelvin = EXCLUDED.max_payment_per_tx_kelvin, \
+                 daily_payment_limit_kelvin = EXCLUDED.daily_payment_limit_kelvin, \
+                 allowed_recipients = EXCLUDED.allowed_recipients, \
+                 allowed_actions = EXCLUDED.allowed_actions, \
+                 parent_agent_id = EXCLUDED.parent_agent_id, \
+                 delegation_revoked = EXCLUDED.delegation_revoked, \
+                 aggregate_daily_limit_kelvin = EXCLUDED.aggregate_daily_limit_kelvin, \
+                 updated_at = EXCLUDED.updated_at",
                 &[
                     &agent_id,
                     &(policy.schema_version as i32),
@@ -3756,11 +3769,12 @@ pub async fn policy_patch_pg_full(
                     &policy.delegation_revoked,
                     &policy.aggregate_daily_limit_kelvin.map(|v| v as i64),
                     &now,
+                    &policy.created_at,
                 ],
             )
             .await
             .map_err(|e| crate::pg_store::StoreError::Db(format!("policy patch: {e}")))?;
-        if updated == 0 {
+        if written == 0 {
             let _ = tx.rollback().await;
             return Ok(false);
         }

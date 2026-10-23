@@ -1728,8 +1728,10 @@ pub async fn patch_agent_policy(
         }
         // 4. the authoritative write. Full-replacement contract: every
         //    validated field is passed explicitly (COALESCE in the store
-        //    layer always sees the fresh validated value). A missing policy
-        //    row is a typed no-op refusal (fail-closed; never an upsert).
+        //    layer always sees the fresh validated value). A draft agent has
+        //    no policy row until its first save, so the store creates the
+        //    row atomically for the owned agent; later writes replace it.
+        //    A missing/foreign agent remains the typed no-op refusal below.
         let stored = match crate::pg_store::pg_run(crate::pg_store::policy_patch_pg_full(
             agent_uuid,
             user.id,
@@ -13738,7 +13740,10 @@ mod agent_tests {
         }
         let build = || {
             Router::<()>::new()
-                .route("/api/agents/{id}", get(dummy).patch(dummy))
+                .route(
+                    "/api/agents/{id}",
+                    get(dummy).patch(dummy).delete(dummy),
+                )
                 .route("/api/agents/{id}/balance", get(dummy))
                 .route("/api/agents/{id}/status", patch(dummy))
                 .route("/api/agents/{id}/policy", get(dummy).patch(dummy))
@@ -13749,6 +13754,19 @@ mod agent_tests {
         };
         // must not panic (matchit rejects static/param conflicts eagerly)
         let _router = build();
+    }
+
+    // The real router must expose DELETE on the parameterized agent route:
+    // the dashboard renders Delete for eligible agents and its handler
+    // already exists. This catches a route wiring regression that would
+    // otherwise surface only as a live 405.
+    #[test]
+    fn delete_route_is_wired_in_the_real_router() {
+        let srv = include_str!("../server.rs");
+        assert!(
+            srv.contains(".delete(agents::delete_agent)"),
+            "DELETE /api/agents/{{id}} must be wired to agents::delete_agent"
+        );
     }
 
     // G21.12.10: program start/execute pin the wallet path verified by the
