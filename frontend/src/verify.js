@@ -31,6 +31,20 @@
 
 const githubLogin = document.querySelector(".github-login");
 
+/* The verifier itself is public, but the shared navbar must still reflect
+ * an existing GitHub session. Rendering the chip here does NOT gate the
+ * verification lookup and never clears the session. */
+async function hydrateNavAuth() {
+    if (!githubLogin || typeof AgentPayAuth === "undefined") return;
+    try {
+        const me = await AgentPayAuth.fetchMe();
+        AgentPayAuth.renderLoginButton(githubLogin, me);
+    } catch (error) {
+        console.error("Failed to load navbar auth state:", error);
+        AgentPayAuth.renderLoginButton(githubLogin, null);
+    }
+}
+
 /* ------------------------------------------------------------------ *
  * State pill + inline hint (dashboard vocabulary, shared classes)
  * ------------------------------------------------------------------ */
@@ -406,6 +420,7 @@ document.getElementById("verifyForm")?.addEventListener("submit", (event) => {
 /* Deep-link support: ?signature=… pre-fills the input and runs the
  * lookup on load (the board/activity deep-link pattern). */
 function boot() {
+    hydrateNavAuth();
     const params = new URLSearchParams(location.search);
     const prefill = (params.get("signature") || "").trim();
     const input = document.getElementById("sigInput");
