@@ -32,6 +32,7 @@ const AgentPayNav = (() => {
         // a "#anchor" would scroll the CURRENT app page and land on nothing.
         ["premise", "Product"],
         ["how", "How&nbsp;It&nbsp;Works"],
+        ["marketplace", "Marketplace"],
         ["architecture", "Architecture"],
         ["leaderboard", "Leaderboard", "/leaderboard"],
         ["faq", "FAQ"],
@@ -89,7 +90,7 @@ const AgentPayNav = (() => {
                 // and land on nothing, so the "Leaderboard" marketing link
                 // targets the real /leaderboard.html page there instead.
                 const href = isApp && realPage ? realPage : `${anchorPrefix}#${id}`;
-                return `            <a class="nav__link" style="--i:${index}" href="${href}">${label}</a>`;
+                return `            <a class="nav__link${realPage ? " nav__link--app" : ""}" style="--i:${index}" href="${href}">${label}</a>`;
             })
             .join("\n");
 

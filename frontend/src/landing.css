@@ -630,14 +630,54 @@ body.is-authed.app-body .nav__links {
 .github-login.github-user {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 9px;
+    min-height: 46px;
     max-width: 100%;
     min-width: 0;
-    padding: 7px 12px;
-    border: 1px solid var(--line);
+    padding: 6px 7px 6px 6px;
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius);
-    background: var(--panel);
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, .035), transparent 55%),
+        var(--panel);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
     text-decoration: none;
+    transition: border-color var(--t-fast), background var(--t-fast);
+}
+
+.github-login.github-user:not([href]):hover {
+    border-color: var(--line-lime);
+    background:
+        linear-gradient(135deg, rgba(var(--lime-rgb), .06), transparent 55%),
+        var(--panel-2);
+}
+
+.github-user-avatar {
+    position: relative;
+    width: 33px;
+    height: 33px;
+    flex-shrink: 0;
+}
+
+.github-user-avatar .github-avatar {
+    width: 33px;
+    height: 33px;
+    border-radius: 50%;
+    border: 1px solid var(--line-lime);
+    object-fit: cover;
+    background: var(--panel-2);
+}
+
+.github-user-status {
+    position: absolute;
+    right: -1px;
+    bottom: -1px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--lime);
+    border: 2px solid var(--bg);
+    box-shadow: 0 0 0 2px rgba(var(--lime-rgb), .16);
 }
 
 /* signed-in chip carries no href (auth.js) — keep it visually inert:
@@ -677,10 +717,10 @@ body.is-authed.app-body .nav__links {
     line-height: 1.25;
 }
 .github-user-info strong {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
+    font-family: var(--font-display);
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
@@ -688,8 +728,8 @@ body.is-authed.app-body .nav__links {
 }
 .github-user-info small {
     font-family: var(--font-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.08em;
+    font-size: 9px;
+    letter-spacing: 0.06em;
     color: var(--text-3);
     white-space: nowrap;
     overflow: hidden;
@@ -697,30 +737,51 @@ body.is-authed.app-body .nav__links {
 }
 
 .connected-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     font-family: var(--font-mono);
     font-size: 8.5px;
     font-weight: 600;
-    letter-spacing: 0.16em;
+    letter-spacing: .12em;
     color: var(--lime);
     border: 1px solid var(--line-lime);
+    border-radius: 999px;
     background: rgba(var(--lime-rgb), 0.05);
-    padding: 3px 7px;
+    padding: 3px 8px;
     white-space: nowrap;
 }
 
+.connected-badge::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--lime);
+    box-shadow: 0 0 0 2px rgba(var(--lime-rgb), .12);
+}
+
 .logout-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 600;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--text-2);
-    border: 1px solid var(--line);
-    padding: 6px 10px;
+    color: var(--text-3);
+    border: 0;
+    border-left: 1px solid var(--line);
+    padding: 7px 5px 7px 10px;
+    margin-left: 1px;
     white-space: nowrap;
     transition: color var(--t-fast), border-color var(--t-fast);
 }
-.logout-btn:hover { color: var(--red); border-color: rgba(255, 106, 106, 0.4); }
+
+.logout-btn__icon { font-size: 12px; line-height: 1; }
+
+.logout-btn:hover { color: var(--red); border-left-color: rgba(255, 106, 106, 0.4); }
 .logout-btn:disabled { opacity: 0.5; cursor: wait; }
 
 .nav__app-links { display: none; align-items: center; gap: var(--s-1); }
@@ -779,6 +840,10 @@ body.is-authed:not(.app-body) .nav__links {
 body.is-authed:not(.app-body) .nav__links .nav__link {
     padding: 5px 10px;
 }
+
+/* The app-row already exposes Leaderboard; keep the section row about
+   in-page sections only when the user is signed in. */
+body.is-authed:not(.app-body) .nav__link--app { display: none; }
 
 body.is-authed:not(.app-body) .nav__links::-webkit-scrollbar { display: none; }
 
