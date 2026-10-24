@@ -291,6 +291,7 @@ let CURRENT_LOGIN = "";
 let MARKETPLACE_POLL_TIMER = null;
 const NOTIFIED_SUBMISSIONS = new Set();
 const MY_TASK_STATUS = new Map();
+const TRACKED_TASK_IDS = new Set();
 let TOAST_TASKS = [];
 
 function hideOwnerToast() {
@@ -338,10 +339,10 @@ function showWorkerToast(task, outcome) {
 
 async function loadMyTaskNotifications(initial = false) {
     if (!CURRENT_LOGIN) return;
-    const { ok, data } = await api("/api/tasks/mine");
-    if (!ok || !Array.isArray(data?.tasks)) return;
-    for (const task of data.tasks) {
-        if (!task || !task.task_id) continue;
+    for (const taskId of Array.from(TRACKED_TASK_IDS).slice(-50)) {
+        const { ok, data } = await api(`/api/tasks/${encodeURIComponent(taskId)}`);
+        if (!ok || !data?.task) continue;
+        const task = data.task;
         const status = statusToken(task.status);
         const previous = MY_TASK_STATUS.get(task.task_id);
         MY_TASK_STATUS.set(task.task_id, status);
@@ -429,6 +430,9 @@ async function loadTasks(options = {}) {
     }
 
     const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+    for (const task of tasks) {
+        if (task && task.task_id) TRACKED_TASK_IDS.add(task.task_id);
+    }
     const previous = new Map(LAST_LIST.map((t) => [t.task_id, statusToken(t.status)]));
     LAST_LIST = tasks;
     $("mkCount").textContent = String(tasks.length);
@@ -504,6 +508,7 @@ let CURRENT_DETAIL = null;
 
 async function openDetail(taskId) {
     if (!taskId) return;
+    TRACKED_TASK_IDS.add(taskId);
     const card = $("mkDetailCard");
     const body = $("detailBody");
     $("detailLabel").textContent = taskId;
