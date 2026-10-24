@@ -614,6 +614,20 @@ fn task_to_summary(task: &Task) -> serde_json::Value {
     })
 }
 
+/// The board is an OPEN-task board. Terminal records stay available through
+/// the detail endpoint, but must not be counted or painted as open work.
+fn is_terminal_task_status(status: &str) -> bool {
+    let normalized: String = status
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| !matches!(c, '_' | ' ' | '-'))
+        .collect();
+    matches!(
+        normalized.as_str(),
+        "cancelled" | "paid" | "rejected" | "paymentfailed"
+    )
+}
+
 // API Handlers
 
 /// List tasks
@@ -631,9 +645,10 @@ pub async fn list_tasks(State(state): State<AppState>, headers: HeaderMap) -> Re
                         let visible = match &user {
                             None => matches!(task.status, TaskStatus::Open),
                             Some(u) => {
-                                matches!(task.status, TaskStatus::Open)
-                                    || task.owner_user_id == u.id
-                                    || task.worker_id == Some(u.id)
+                                !is_terminal_task_status(&format!("{:?}", task.status))
+                                    && (matches!(task.status, TaskStatus::Open)
+                                        || task.owner_user_id == u.id
+                                        || task.worker_id == Some(u.id))
                             }
                         };
                         if visible {
@@ -650,6 +665,7 @@ pub async fn list_tasks(State(state): State<AppState>, headers: HeaderMap) -> Re
     // mirroring the exact summary shape. FS rows remain primary when present;
     // a PG failure degrades to FS-only listing (never a 500).
     if crate::pg_store::pg_is_authoritative() {
+        let viewer_id = user.as_ref().map(|u| u.id as i64);
         enum PgListOutcome {
             Rows(Vec<serde_json::Value>),
             Down(String),
@@ -666,8 +682,12 @@ pub async fn list_tasks(State(state): State<AppState>, headers: HeaderMap) -> Re
                     .query(
                         "SELECT task_id, title, status, reward_rlo, owner_name, \
                          COALESCE(worker_name, '') AS worker_name, created_at \
-                         FROM tasks_pg",
-                        &[],
+                         FROM tasks_pg \
+                         WHERE status NOT IN ('cancelled','paid','rejected','paymentfailed') \
+                           AND (status = 'open' OR \
+                                ($1::BIGINT IS NOT NULL AND \
+                                 (owner_user_id = $1 OR worker_id = $1)))",
+                        &[&viewer_id],
                     )
                     .await
                 {
@@ -685,8 +705,12 @@ pub async fn list_tasks(State(state): State<AppState>, headers: HeaderMap) -> Re
                                     .query(
                                         "SELECT task_id, title, status, reward_rlo, owner_name, \
                                          COALESCE(worker_name, '') AS worker_name, created_at \
-                                         FROM tasks_pg",
-                                        &[],
+                                         FROM tasks_pg \
+                                         WHERE status NOT IN ('cancelled','paid','rejected','paymentfailed') \
+                                           AND (status = 'open' OR \
+                                                ($1::BIGINT IS NOT NULL AND \
+                                                 (owner_user_id = $1 OR worker_id = $1)))",
+                                        &[&viewer_id],
                                     )
                                     .await
                                     .map_err(|e| format!("tasks_pg list (retry): {e}"))?
