@@ -98,9 +98,12 @@ const AgentPayAuth = (() => {
         button.setAttribute("aria-label", `Signed in as ${name}${login ? ` (${login})` : ""}`);
 
         button.innerHTML = `
-            ${avatar
-                ? `<img class="github-avatar" src="${escapeHtml(avatar)}" alt="${escapeHtml(name)}" data-initial="${escapeHtml(name)}">`
-                : `<span class="github-avatar github-avatar--fallback" aria-hidden="true">${escapeHtml((name || "U").charAt(0).toUpperCase())}</span>`}
+            <span class="github-user-avatar">
+                ${avatar
+                    ? `<img class="github-avatar" src="${escapeHtml(avatar)}" alt="${escapeHtml(name)}" data-initial="${escapeHtml(name)}">`
+                    : `<span class="github-avatar github-avatar--fallback" aria-hidden="true">${escapeHtml((name || "U").charAt(0).toUpperCase())}</span>`}
+                <span class="github-user-status" aria-hidden="true"></span>
+            </span>
 
             <span class="github-user-info">
                 <strong>${escapeHtml(name)}</strong>
@@ -110,7 +113,8 @@ const AgentPayAuth = (() => {
             <span class="connected-badge">CONNECTED</span>
 
             <button type="button" class="logout-btn" id="logoutBtn">
-                Logout
+                <span class="logout-btn__icon" aria-hidden="true">↪</span>
+                <span class="logout-btn__label">Logout</span>
             </button>
         `;
 
