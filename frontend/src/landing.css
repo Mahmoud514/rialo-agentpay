@@ -780,6 +780,10 @@ body.is-authed:not(.app-body) .nav__links .nav__link {
     padding: 5px 10px;
 }
 
+/* The app-row already exposes Leaderboard; keep the section row about
+   in-page sections only when the user is signed in. */
+body.is-authed:not(.app-body) .nav__link--app { display: none; }
+
 body.is-authed:not(.app-body) .nav__links::-webkit-scrollbar { display: none; }
 
 body.is-authed:not(.app-body) .section {
