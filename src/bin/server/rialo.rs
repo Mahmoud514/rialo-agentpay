@@ -926,7 +926,10 @@ impl RialoConfig {
                     // verdict. Fall back to the read-only RPC status probe
                     // (the CLI output itself is not evidence).
                     match self.signature_status_probe(signature) {
-                        StatusProbe::Explicit(record) => TxLookup::Found(record),
+                        StatusProbe::Explicit(mut record) => {
+                            self.supplement_chain_timing(signature, &mut record);
+                            TxLookup::Found(record)
+                        }
                         StatusProbe::NoStatus => TxLookup::NotFound,
                         StatusProbe::Inconclusive => TxLookup::Malformed,
                     }
@@ -941,7 +944,10 @@ impl RialoConfig {
                 // status is evidence; the raw CLI error only classifies
                 // what the node did NOT answer.
                 match self.signature_status_probe(signature) {
-                    StatusProbe::Explicit(record) => return TxLookup::Found(record),
+                    StatusProbe::Explicit(mut record) => {
+                        self.supplement_chain_timing(signature, &mut record);
+                        return TxLookup::Found(record);
+                    }
                     // An ANSWERED query with no status for this signature:
                     // the node does not know it yet — temporary not-found,
                     // never permanent absence.
