@@ -919,7 +919,18 @@ impl RialoConfig {
         }
         match self.run(Operation::Read, &["client", "transaction", signature]) {
             Ok(value) => match parse_tx_record(signature, &value) {
-                None => TxLookup::Malformed,
+                None => {
+                    // The CLI can answer successfully with metadata only
+                    // (`transaction_metadata`), which has no explicit
+                    // `executed` field and therefore cannot be parsed as a
+                    // verdict. Fall back to the read-only RPC status probe
+                    // (the CLI output itself is not evidence).
+                    match self.signature_status_probe(signature) {
+                        StatusProbe::Explicit(record) => TxLookup::Found(record),
+                        StatusProbe::NoStatus => TxLookup::NotFound,
+                        StatusProbe::Inconclusive => TxLookup::Malformed,
+                    }
+                }
                 Some(mut rec) => {
                     self.supplement_chain_timing(signature, &mut rec);
                     TxLookup::Found(rec)
@@ -1040,6 +1051,23 @@ impl RialoConfig {
         if let Ok(result) = self.rpc_read("getTransaction", &params) {
             if rec.block_height.is_none() {
                 rec.block_height = u64_field(&result, &["block_height", "blockHeight"]);
+            }
+            if rec.fee.is_none() {
+                rec.fee = result
+                    .get("meta")
+                    .and_then(|m| u64_field(m, &["fee"]))
+                    .or_else(|| u64_field(&result, &["fee"]));
+            }
+            let (payer, recipient, amount) =
+                extract_single_transfer(&result).unwrap_or((None, None, None));
+            if rec.payer.is_none() {
+                rec.payer = payer;
+            }
+            if rec.transfer_recipient.is_none() {
+                rec.transfer_recipient = recipient;
+            }
+            if rec.transfer_amount_kelvin.is_none() {
+                rec.transfer_amount_kelvin = amount;
             }
             if let Some(t) = i64_field(&result, &["block_time", "blockTime"]) {
                 rec.block_time = Some(normalize_block_time(t));
