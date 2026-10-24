@@ -287,6 +287,61 @@ function apiErrText(data, status) {
  * ------------------------------------------------------------------ */
 
 let LAST_LIST = [];
+let CURRENT_LOGIN = "";
+let MARKETPLACE_POLL_TIMER = null;
+const NOTIFIED_SUBMISSIONS = new Set();
+let TOAST_TASKS = [];
+
+function hideOwnerToast() {
+    const toast = $("mkOwnerToast");
+    if (!toast) return;
+    toast.hidden = true;
+    toast.innerHTML = "";
+    TOAST_TASKS = [];
+}
+
+function showOwnerToast(tasks) {
+    const toast = $("mkOwnerToast");
+    if (!toast || !tasks.length) return;
+    for (const task of tasks) {
+        if (task && task.task_id) NOTIFIED_SUBMISSIONS.add(task.task_id);
+    }
+    TOAST_TASKS = tasks;
+    const first = tasks[0];
+    const count = tasks.length;
+    toast.innerHTML = `
+        <span class="mk-toast__dot" aria-hidden="true"></span>
+        <div class="mk-toast__copy">
+            <strong>${count === 1 ? "Work submitted for review" : `${count} tasks need review`}</strong>
+            <span>${esc(first.title || "A worker submitted work")} — review the evidence before paying.</span>
+        </div>
+        <button type="button" class="wallet-btn wallet-btn--sm wallet-btn--solid" id="mkToastReview">Review</button>
+        <button type="button" class="mk-toast__close" id="mkToastClose" aria-label="Dismiss review notification">×</button>`;
+    toast.hidden = false;
+    const review = document.getElementById("mkToastReview");
+    if (review) {
+        review.addEventListener("click", () => {
+            hideOwnerToast();
+            if (first.task_id) openDetail(first.task_id);
+        });
+    }
+    const close = document.getElementById("mkToastClose");
+    if (close) close.addEventListener("click", hideOwnerToast);
+}
+
+function startMarketplacePolling() {
+    if (MARKETPLACE_POLL_TIMER) return;
+    MARKETPLACE_POLL_TIMER = window.setInterval(() => {
+        if (document.visibilityState !== "visible") return;
+        // Never replace the list while the owner is typing a task. The
+        // detail drawer is independent, so a silent list refresh is safe.
+        const form = document.getElementById("mkCreateForm");
+        if (form && form.contains(document.activeElement)) return;
+        loadTasks({ silent: true }).catch((error) => {
+            console.warn("Marketplace background refresh failed:", error);
+        });
+    }, 15000);
+}
 
 function setMarketplaceState(kind, label) {
     const el = $("mkState");
@@ -297,11 +352,13 @@ function setMarketplaceState(kind, label) {
         `<span class="status__label">${esc(label)}</span>`;
 }
 
-async function loadTasks() {
+async function loadTasks(options = {}) {
+    const silent = options && options.silent === true;
     const body = $("mkBody");
     const { ok, status, data } = await api("/api/tasks/open");
 
     if (!ok) {
+        if (silent) return;
         setMarketplaceState("status--off", "Marketplace — unavailable");
         $("mkCount").textContent = "—";
         body.innerHTML = `
@@ -316,6 +373,7 @@ async function loadTasks() {
     }
 
     const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+    const previous = new Map(LAST_LIST.map((t) => [t.task_id, statusToken(t.status)]));
     LAST_LIST = tasks;
     $("mkCount").textContent = String(tasks.length);
 
@@ -360,6 +418,16 @@ async function loadTasks() {
             if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
         });
     });
+
+    // Owner-side, in-page notification. The API has no push channel; this
+    // polling loop surfaces a worker submission as soon as the page sees it.
+    const review = tasks.filter((t) => {
+        if (!CURRENT_LOGIN || t.owner_name !== CURRENT_LOGIN) return false;
+        if (statusToken(t.status) !== "submitted") return false;
+        if (previous.get(t.task_id) === "submitted") return false;
+        return !NOTIFIED_SUBMISSIONS.has(t.task_id);
+    });
+    if (review.length) showOwnerToast(review);
 }
 
 function resetListLoading() {
@@ -685,6 +753,7 @@ async function boot() {
     let authed = false;
     try {
         const me = await AgentPayAuth.fetchMe();
+        CURRENT_LOGIN = me?.user?.login || "";
         authed = AgentPayAuth.renderLoginButton(githubLogin, me);
     } catch (error) {
         console.error("Failed to load marketplace auth state:", error);
@@ -693,6 +762,7 @@ async function boot() {
 
     await loadTasks();
     await setupCreate(authed);
+    startMarketplacePolling();
 }
 
 boot().catch((error) => {
