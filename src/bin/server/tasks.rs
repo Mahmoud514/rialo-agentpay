@@ -306,6 +306,9 @@ pub(crate) fn ensure_dirs_for_test() -> std::io::Result<()> {
 // every coordination path now uses the shared agents::store_lock().
 
 fn write_json_atomic<T: Serialize>(path: &FsPath, value: &T) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|e| std::io::Error::other(format!("serialize: {e}")))?;
     let tmp = path.with_file_name(format!(".tmp-{}", Uuid::new_v4()));
@@ -454,6 +457,27 @@ fn action_read_error(failure: TaskReadFailure) -> axum::response::Response {
             )
         }
     }
+}
+
+/// Load the paying agent for an action. PG is authoritative for the agent
+/// record in PG mode; fall back to the durable row instead of failing on a
+/// missing local JSON mirror. The private key remains in its separate
+/// wallet store and is never read here.
+fn load_agent_for_task(agent_id: &str) -> Result<Agent, String> {
+    let uuid = Uuid::parse_str(agent_id).map_err(|_| "invalid agent id".to_string())?;
+    if crate::pg_store::pg_is_authoritative() {
+        let result = tokio::task::block_in_place(|| {
+            crate::pg_store::pg_run(crate::pg_store::agent_read_dispatch(uuid))
+        });
+        return match result {
+            Ok(Ok(Some(agent))) => Ok(agent),
+            Ok(Ok(None)) => Err("agent not found".to_string()),
+            Ok(Err(e)) => Err(format!("agent read: {e}")),
+            Err(e) => Err(format!("agent read worker: {e:?}")),
+        };
+    }
+    let path = agents_dir().join(format!("{agent_id}.json"));
+    crate::agents::read_agent(&path).map_err(|e| format!("agent read: {e}"))
 }
 
 fn read_reservation(task_id: &str) -> Result<TaskReservation, std::io::Error> {
@@ -1697,11 +1721,12 @@ pub async fn review_task(
                 );
             };
 
-            // Load the agent that will make the payment
-            let agent_path = agents_dir().join(format!("{}.json", task.agent_id));
-            let agent = match crate::agents::read_agent(&agent_path) {
+            // Load the agent that will make the payment (durable PG row in
+            // PG mode; no dependency on an ephemeral FS mirror).
+            let agent = match load_agent_for_task(&task.agent_id) {
                 Ok(a) => a,
-                Err(_) => {
+                Err(e) => {
+                    eprintln!("[tasks] owner agent unavailable: {e}");
                     return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "AGENT_NOT_FOUND",
@@ -2030,11 +2055,12 @@ async fn execute_task_payment_with_policy(
         return Err(PaymentExecResult::Failed(format!("Store error: {}", e)));
     }
 
-    // 2. Load the paying agent (authoritative record).
-    let agent_path = crate::agents::agents_dir().join(format!("{}.json", task.agent_id));
-    let agent = match crate::agents::read_agent(&agent_path) {
+    // 2. Load the paying agent (durable authoritative record; PG mode
+    //    recovers agents whose local JSON mirror was lost on restart).
+    let agent = match load_agent_for_task(&task.agent_id) {
         Ok(a) => a,
-        Err(_) => {
+        Err(e) => {
+            eprintln!("[tasks] owner agent unavailable: {e}");
             // Pre-transfer abort: nothing was ever dispatched — releasing
             // the reservation is the established safe policy here.
             task.status = TaskStatus::PaymentFailed;
