@@ -1,11 +1,20 @@
 /* ==========================================================================
    RIALO AGENTPAY — MARKETPLACE (marketplace.html extra styles)
-   Extends the shared AgentPay visual language (landing.css tokens, app.css
-   layout, dashboard.css anatomy). No second system: colors, radius, spacing
-   and mono font come from the existing token set.
+
+   Extends the shared AgentPay visual language (landing.css tokens,
+   app.css layout, dashboard.css card anatomy). No second design system:
+   every colour, radius, spacing step, and mono font comes from the
+   existing token set.
+
+   This file owns:
+     - the task list rows + status pills
+     - the owner create form (inputs, select, textarea, primary action)
+     - the detail drawer's action lane
    ========================================================================== */
 
-/* ---------- task rows ---------- */
+/* --------------------------------------------------------------------------
+   OPEN TASK ROWS
+   -------------------------------------------------------------------------- */
 .mk-list {
     display: flex;
     flex-direction: column;
@@ -14,20 +23,31 @@
 
 .mk-row {
     display: flex;
-    align-items: center;
-    gap: var(--s-3);
-    padding: var(--s-3);
+    align-items: flex-start;
+    gap: var(--s-4);
+    padding: var(--s-4) var(--s-5);
     border: 1px solid var(--line);
-    border-radius: var(--r-2);
-    background: var(--panel-2, var(--panel));
+    border-radius: var(--radius);
+    background: var(--panel-2);
     cursor: pointer;
-    transition: border-color 120ms ease;
+    transition:
+        border-color var(--t-fast),
+        background var(--t-fast),
+        box-shadow var(--t-fast),
+        transform var(--t-fast);
 }
 
-.mk-row:hover,
+.mk-row:hover {
+    border-color: var(--line-lime);
+    background: var(--bg-raise);
+    box-shadow: var(--glow-lime-soft);
+    transform: translateY(-1px);
+}
+
 .mk-row:focus-visible {
-    border-color: var(--accent, var(--line));
-    outline: none;
+    outline: 2px solid var(--lime);
+    outline-offset: 2px;
+    border-color: var(--line-lime);
 }
 
 .mk-row__main {
@@ -36,41 +56,206 @@
 }
 
 .mk-row__title {
+    margin: 0 0 var(--s-1);
+    color: var(--text);
     font-size: 14px;
     font-weight: 600;
-    color: var(--text);
-    margin: 0 0 2px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
 }
 
 .mk-row__meta {
-    font-size: 12px;
-    color: var(--muted);
     display: flex;
-    gap: var(--s-3);
     flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2) var(--s-3);
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.02em;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.mk-row__meta .mono {
+    color: var(--text-2);
 }
 
 .mk-row__reward {
+    flex: none;
+    color: var(--lime);
+    font-family: var(--font-mono);
     font-size: 14px;
-    font-weight: 700;
-    color: var(--text);
+    font-weight: 600;
+    letter-spacing: -0.01em;
     white-space: nowrap;
 }
 
 .mk-row__reward .unit {
-    font-size: 11px;
-    color: var(--muted);
-    font-weight: 400;
+    color: var(--text-3);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
 }
 
-/* ---------- detail fields ---------- */
+/* --------------------------------------------------------------------------
+   STATUS PILLS — tokens map to the task engine's status strings.
+   -------------------------------------------------------------------------- */
+.mk-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    line-height: 1.5;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.mk-pill--open,
+.mk-pill--paid {
+    color: var(--lime);
+    border-color: rgba(var(--lime-rgb), 0.38);
+}
+
+.mk-pill--in-progress,
+.mk-pill--submitted,
+.mk-pill--under-review,
+.mk-pill--revision-requested,
+.mk-pill--payment-pending {
+    color: var(--amber);
+    border-color: rgba(251, 191, 36, 0.38);
+}
+
+.mk-pill--rejected,
+.mk-pill--cancelled,
+.mk-pill--payment-failed {
+    color: var(--red);
+    border-color: rgba(248, 113, 113, 0.38);
+}
+
+/* --------------------------------------------------------------------------
+   CREATE FORM — two-column desktop layout, one column on narrow screens.
+   -------------------------------------------------------------------------- */
+.mk-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-4);
+    align-items: start;
+    margin: 0;
+}
+
+.mk-form .field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    min-width: 0;
+    margin: 0;
+}
+
+.mk-form .field--wide {
+    grid-column: 1 / -1;
+}
+
+.mk-form .label {
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    line-height: 1.4;
+    text-transform: uppercase;
+}
+
+.mk-form .input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 42px;
+    padding: 10px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    outline: none;
+    background: var(--bg-raise);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.45;
+    transition:
+        border-color var(--t-fast),
+        box-shadow var(--t-fast),
+        background var(--t-fast);
+}
+
+.mk-form textarea.input {
+    min-height: 78px;
+    resize: vertical;
+}
+
+.mk-form select.input {
+    cursor: pointer;
+}
+
+.mk-form .input::placeholder {
+    color: var(--text-3);
+    letter-spacing: 0.02em;
+}
+
+.mk-form .input:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.mk-form .input:focus {
+    border-color: var(--line-lime);
+    background: var(--panel-2);
+    box-shadow: 0 0 0 1px rgba(var(--lime-rgb), 0.16), var(--glow-lime-soft);
+}
+
+.mk-form .field-hint {
+    margin-top: 0;
+}
+
+.mk-form > .wallet-btn {
+    justify-self: start;
+    align-self: end;
+    min-height: 42px;
+}
+
+.mk-form__status {
+    grid-column: 1 / -1;
+    min-height: 17px;
+    margin: 0;
+    color: var(--text-3);
+    white-space: pre-wrap;
+}
+
+.mk-form__status[role="alert"] {
+    color: var(--red);
+}
+
+/* --------------------------------------------------------------------------
+   DETAIL DRAWER + ACTION LANE
+   -------------------------------------------------------------------------- */
 .mk-detail-grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: var(--s-3);
+    gap: var(--s-4);
+}
+
+.mk-detail-grid .label {
+    display: block;
+    margin-bottom: var(--s-1);
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    line-height: 1.4;
+    text-transform: uppercase;
 }
 
 .mk-detail-grid .field-hint {
@@ -79,30 +264,82 @@
 
 .mk-actions {
     display: flex;
-    gap: var(--s-2);
+    align-items: flex-end;
     flex-wrap: wrap;
-    margin-top: var(--s-3);
+    gap: var(--s-3);
+    margin-top: var(--s-4);
+    padding-top: var(--s-4);
+    border-top: 1px solid var(--line);
 }
 
-.mk-form textarea.input {
-    resize: vertical;
+.mk-actions .input {
+    flex: 1 1 220px;
+    min-width: 0;
+    min-height: 40px;
+    box-sizing: border-box;
+    padding: 9px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    outline: none;
+    background: var(--bg-raise);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    transition: border-color var(--t-fast), box-shadow var(--t-fast);
 }
 
-.mk-form .field {
-    margin-bottom: var(--s-3);
+.mk-actions .input::placeholder {
+    color: var(--text-3);
 }
 
-/* ---------- status pills ---------- */
-.mk-pill {
-    display: inline-block;
-    padding: 2px 8px;
-    font-size: 11px;
-    border-radius: 999px;
-    border: 1px solid var(--line);
-    color: var(--muted);
+.mk-actions .input:focus {
+    border-color: var(--line-lime);
+    box-shadow: 0 0 0 1px rgba(var(--lime-rgb), 0.16), var(--glow-lime-soft);
 }
 
-.mk-pill--open { color: var(--ok, var(--text)); border-color: var(--ok, var(--line)); }
-.mk-pill--claimed { color: var(--warn, var(--muted)); }
-.mk-pill--submitted { color: var(--accent, var(--muted)); }
-.mk-pill--paid { color: var(--ok, var(--text)); }
+.mk-actions .wallet-btn {
+    flex: none;
+}
+
+.wallet-btn--danger {
+    border-color: rgba(248, 113, 113, 0.38);
+    background: rgba(248, 113, 113, 0.07);
+    color: var(--red);
+}
+
+.wallet-btn--danger:hover:not(:disabled) {
+    border-color: rgba(248, 113, 113, 0.65);
+    background: rgba(248, 113, 113, 0.14);
+    box-shadow: 0 0 22px -12px rgba(248, 113, 113, 0.5);
+}
+
+.mk-actions > .field-hint {
+    flex-basis: 100%;
+    margin: var(--s-1) 0 0;
+}
+
+/* --------------------------------------------------------------------------
+   RESPONSIVE — one-column form and action lane on narrow screens.
+   -------------------------------------------------------------------------- */
+@media (max-width: 760px) {
+    .mk-form {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .mk-row {
+        padding: var(--s-3) var(--s-4);
+    }
+
+    .mk-actions .input,
+    .mk-actions .wallet-btn {
+        flex-basis: 100%;
+        width: 100%;
+    }
+}
+
+@media (max-width: 420px) {
+    .mk-row {
+        flex-direction: column;
+        gap: var(--s-2);
+    }
+}
