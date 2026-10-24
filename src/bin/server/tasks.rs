@@ -252,13 +252,9 @@ fn write_json_atomic<T: Serialize>(path: &FsPath, value: &T) -> Result<(), std::
                     .build()
                     .map_err(|e| format!("mirror rt: {e}"))?;
                 rt.block_on(async {
-                    let (mut client, conn) =
-                        tokio_postgres::connect(mirror_url.as_str(), tokio_postgres::NoTls)
-                            .await
-                            .map_err(|e| format!("mirror connect: {e}"))?;
-                    tokio::spawn(async move {
-                        let _ = conn.await;
-                    });
+                    let mut client = crate::pg_store::pg_connect(mirror_url.as_str())
+                        .await
+                        .map_err(|e| format!("mirror connect: {e}"))?;
                     let up = tokio::time::timeout(
                         std::time::Duration::from_secs(15),
                         crate::pg_store::task_upsert_pg(&mut client, &tval),
