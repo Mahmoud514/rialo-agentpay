@@ -242,8 +242,10 @@ function downloadSubmissionFile(file) {
 }
 
 function safeHttpUrl(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return null;
     try {
-        const url = new URL(String(value || ""), location.origin);
+        const url = new URL(raw, location.origin);
         return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
     } catch {
         return null;
