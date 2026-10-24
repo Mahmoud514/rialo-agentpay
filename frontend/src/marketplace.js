@@ -52,6 +52,204 @@ function statusLabel(status) {
     return statusToken(status).replace(/-/g, " ");
 }
 
+/* Submission attachments: any browser-readable file is accepted; the
+ * backend stores small, bounded data URLs so evidence survives restarts.
+ * Images are previewed only for safe raster MIME types; every file is
+ * downloaded through a Blob URL (never rendered as HTML/SVG). */
+const MAX_SUBMISSION_FILES = 5;
+const MAX_RAW_SUBMISSION_BYTES = 2_000_000;
+const MAX_SUBMISSION_IMAGE_DIMENSION = 1400;
+let PENDING_SUBMISSION_FILES = [];
+
+function attachmentMeta(file) {
+    if (typeof file === "string") {
+        return { name: "Attachment", content_type: dataUrlMime(file), data_url: file };
+    }
+    if (file && typeof file === "object") {
+        return {
+            name: String(file.name || "Attachment"),
+            content_type: String(file.content_type || dataUrlMime(file.data_url || "")),
+            data_url: String(file.data_url || ""),
+        };
+    }
+    return { name: "Attachment", content_type: "", data_url: "" };
+}
+
+function dataUrlMime(dataUrl) {
+    const match = /^data:([^;,]+)[;,]/.exec(String(dataUrl || ""));
+    return match ? match[1].toLowerCase() : "";
+}
+
+function isPreviewableImage(contentType) {
+    return ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"]
+        .includes(String(contentType || "").toLowerCase());
+}
+
+function formatBytes(bytes) {
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n <= 0) return "0 B";
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function readFileDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+        reader.readAsDataURL(file);
+    });
+}
+
+function compressImage(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const img = new Image();
+            img.onload = () => {
+                const scale = Math.min(
+                    1,
+                    MAX_SUBMISSION_IMAGE_DIMENSION / Math.max(img.width, img.height),
+                );
+                const canvas = document.createElement("canvas");
+                canvas.width = Math.max(1, Math.round(img.width * scale));
+                canvas.height = Math.max(1, Math.round(img.height * scale));
+                const ctx = canvas.getContext("2d");
+                if (!ctx) return reject(new Error(`Could not process ${file.name}`));
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                const type = file.type === "image/png" ? "image/png" : "image/jpeg";
+                resolve({
+                    data_url: canvas.toDataURL(type, 0.82),
+                    content_type: type,
+                });
+            };
+            img.onerror = () => reject(new Error(`Could not read ${file.name}`));
+            img.src = String(reader.result || "");
+        };
+        reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+        reader.readAsDataURL(file);
+    });
+}
+
+async function prepareSubmissionFile(file) {
+    if (file.size > MAX_RAW_SUBMISSION_BYTES) {
+        throw new Error(`${file.name} is larger than ${formatBytes(MAX_RAW_SUBMISSION_BYTES)}`);
+    }
+    const safeName = String(file.name || "attachment")
+        .slice(0, 120)
+        .replace(/[\\/]/g, "_");
+    let prepared;
+    if (isPreviewableImage(file.type) && file.type !== "image/gif") {
+        prepared = await compressImage(file);
+    } else {
+        const dataUrl = await readFileDataUrl(file);
+        prepared = {
+            data_url: dataUrl,
+            content_type: file.type || dataUrlMime(dataUrl),
+        };
+    }
+    if (!prepared.data_url.startsWith("data:")) {
+        throw new Error(`Could not prepare ${safeName}`);
+    }
+    return {
+        name: safeName,
+        content_type: prepared.content_type,
+        data_url: prepared.data_url,
+    };
+}
+
+function renderSubmissionPreview() {
+    const box = document.getElementById("mkSubPreview");
+    if (!box) return;
+    if (PENDING_SUBMISSION_FILES.length === 0) {
+        box.innerHTML = "";
+        return;
+    }
+    box.innerHTML = PENDING_SUBMISSION_FILES.map((file, index) => {
+        const preview = isPreviewableImage(file.content_type)
+            ? `<img src="${esc(file.data_url)}" alt="${esc(file.name)}">`
+            : `<span class="mk-file-icon">${esc((file.content_type.split("/")[1] || "file").slice(0, 5).toUpperCase())}</span>`;
+        return `<span class="mk-file-preview">${preview}<span class="mk-file-preview__meta"><strong>${esc(file.name)}</strong><small>${esc(file.content_type || "file")}</small></span><button type="button" class="mk-file-remove" data-remove-file="${index}" aria-label="Remove ${esc(file.name)}">×</button></span>`;
+    }).join("");
+    box.querySelectorAll("[data-remove-file]").forEach((button) => {
+        button.addEventListener("click", () => {
+            const index = Number(button.getAttribute("data-remove-file"));
+            PENDING_SUBMISSION_FILES.splice(index, 1);
+            renderSubmissionPreview();
+        });
+    });
+}
+
+async function handleSubmissionFileInput(input) {
+    const selected = Array.from(input.files || []);
+    if (selected.length === 0) return;
+    const message = document.getElementById("mkSubFileMsg");
+    if (message) message.textContent = "";
+    const remaining = MAX_SUBMISSION_FILES - PENDING_SUBMISSION_FILES.length;
+    if (selected.length > remaining) {
+        if (message) message.textContent = `You can attach at most ${MAX_SUBMISSION_FILES} files.`;
+        input.value = "";
+        return;
+    }
+    input.disabled = true;
+    try {
+        for (const file of selected) {
+            PENDING_SUBMISSION_FILES.push(await prepareSubmissionFile(file));
+        }
+        renderSubmissionPreview();
+    } catch (error) {
+        if (message) message.textContent = error.message || String(error);
+    } finally {
+        input.disabled = false;
+        input.value = "";
+    }
+}
+
+function renderAttachments(files) {
+    if (!Array.isArray(files) || files.length === 0) return "";
+    return `<div class="mk-attachments">${files.map((raw, index) => {
+        const file = attachmentMeta(raw);
+        const image = isPreviewableImage(file.content_type)
+            ? `<img class="mk-attachment__thumb" src="${esc(file.data_url)}" alt="${esc(file.name)}" loading="lazy">`
+            : `<span class="mk-attachment__icon">${esc((file.content_type.split("/")[1] || "file").slice(0, 5).toUpperCase())}</span>`;
+        return `<button type="button" class="mk-attachment" data-submission-file="${index}" title="Download ${esc(file.name)}">${image}<span class="mk-attachment__meta"><strong>${esc(file.name)}</strong><small>${esc(file.content_type || "file")}</small></span><span class="mk-attachment__download" aria-hidden="true">↓</span></button>`;
+    }).join("")}</div>`;
+}
+
+function downloadSubmissionFile(file) {
+    const meta = attachmentMeta(file);
+    const comma = meta.data_url.indexOf(",");
+    if (comma < 0) return;
+    const metaPart = meta.data_url.slice(5, comma);
+    if (!metaPart.endsWith(";base64")) return;
+    try {
+        const binary = atob(meta.data_url.slice(comma + 1));
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: meta.content_type || "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = meta.name || "attachment";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+        console.error("Attachment download failed:", error);
+    }
+}
+
+function safeHttpUrl(value) {
+    try {
+        const url = new URL(String(value || ""), location.origin);
+        return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+    } catch {
+        return null;
+    }
+}
+
 function fmtDate(sec) {
     const n = Number(sec);
     if (!Number.isFinite(n) || n <= 0) return "—";
@@ -88,14 +286,21 @@ function apiErrText(data, status) {
 
 let LAST_LIST = [];
 
+function setMarketplaceState(kind, label) {
+    const el = $("mkState");
+    if (!el) return;
+    el.className = `status ${kind}`;
+    el.innerHTML =
+        `<span class="status__dot" aria-hidden="true"></span>` +
+        `<span class="status__label">${esc(label)}</span>`;
+}
+
 async function loadTasks() {
     const body = $("mkBody");
     const { ok, status, data } = await api("/api/tasks/open");
 
     if (!ok) {
-        $("mkState").innerHTML =
-            `<span class="status__dot" aria-hidden="true"></span>` +
-            `<span class="status__label">Marketplace — unavailable</span>`;
+        setMarketplaceState("status--off", "Marketplace — unavailable");
         $("mkCount").textContent = "—";
         body.innerHTML = `
             <div class="dash-empty" role="alert">
@@ -113,9 +318,7 @@ async function loadTasks() {
     $("mkCount").textContent = String(tasks.length);
 
     if (tasks.length === 0) {
-        $("mkState").innerHTML =
-            `<span class="status__dot" aria-hidden="true"></span>` +
-            `<span class="status__label">Marketplace — empty</span>`;
+        setMarketplaceState("status--na", "Marketplace — empty");
         const createMsg = $("mkCreateMsg");
         if (createMsg) {
             createMsg.textContent = "";
@@ -129,9 +332,7 @@ async function loadTasks() {
         return;
     }
 
-    $("mkState").innerHTML =
-        `<span class="status__dot" aria-hidden="true"></span>` +
-        `<span class="status__label">Marketplace — live</span>`;
+    setMarketplaceState("status--on", "Marketplace — live");
 
     body.innerHTML = `
         <div class="mk-list">
@@ -160,9 +361,7 @@ async function loadTasks() {
 }
 
 function resetListLoading() {
-    $("mkState").innerHTML =
-        `<span class="status__dot" aria-hidden="true"></span>` +
-        `<span class="status__label">Marketplace — loading</span>`;
+    setMarketplaceState("status--na", "Marketplace — loading");
     $("mkCount").textContent = "—";
     $("mkBody").innerHTML = `
         <div class="dash-empty" role="status">
@@ -200,12 +399,15 @@ async function openDetail(taskId) {
 
     const t = data.task || {};
     CURRENT_DETAIL = { id: t.task_id, isOwner: !!data.is_owner, isWorker: !!data.is_worker, status: t.status };
+    PENDING_SUBMISSION_FILES = [];
     $("detailStatus").textContent = t.status ? statusLabel(t.status) : "?";
     renderDetail(t);
 }
 
 function renderDetail(t) {
     const body = $("detailBody");
+    const attachments = Array.isArray(t.submission_files) ? t.submission_files : [];
+    const submissionUrl = safeHttpUrl(t.submission_url);
     body.innerHTML = `
         <div class="mk-detail-grid">
             <div>
@@ -227,15 +429,26 @@ function renderDetail(t) {
                 <span>Created: ${esc(fmtDate(t.created_at))}</span>
                 <span>Updated: ${esc(fmtDate(t.updated_at))}</span>
             </div>
-            ${t.submission_url ? `<div><span class="label">Submission</span>
-                <p class="field-hint"><a class="dash-inline-link" href="${esc(t.submission_url)}" rel="noopener noreferrer">${esc(t.submission_url)}</a></p>
-                ${t.submission_notes ? `<p class="field-hint">${esc(t.submission_notes)}</p>` : ""}
-            </div>` : ""}
+            ${(submissionUrl || t.submission_notes || attachments.length)
+                ? `<div class="mk-submission">
+                    <span class="label">Submitted work</span>
+                    ${submissionUrl ? `<p class="field-hint"><a class="dash-inline-link" href="${esc(submissionUrl)}" target="_blank" rel="noopener noreferrer">${esc(submissionUrl)}</a></p>` : ""}
+                    ${t.submission_notes ? `<p class="mk-submission__notes">${esc(t.submission_notes)}</p>` : ""}
+                    ${renderAttachments(attachments)}
+                </div>`
+                : ""}
             ${t.review_notes ? `<div><span class="label">Review notes</span><p class="field-hint">${esc(t.review_notes)}</p></div>` : ""}
             ${t.payment_tx_signature ? `<div><span class="label">Payment tx</span><p class="field-hint mono">${esc(t.payment_tx_signature)}</p></div>` : ""}
             ${t.payment_error ? `<div><span class="label">Payment error</span><p class="field-hint">${esc(t.payment_error)}</p></div>` : ""}
         </div>
         <div class="mk-actions" id="mkActionArea"></div>`;
+
+    body.querySelectorAll("[data-submission-file]").forEach((button) => {
+        button.addEventListener("click", () => {
+            const index = Number(button.getAttribute("data-submission-file"));
+            downloadSubmissionFile(attachments[index]);
+        });
+    });
 
     const area = document.getElementById("mkActionArea");
     const d = CURRENT_DETAIL;
@@ -264,24 +477,44 @@ function renderDetail(t) {
         document.getElementById("mkClaim").addEventListener("click", () => act("claim"));
     } else if (st === "in-progress" && d.isWorker) {
         area.innerHTML = `
-            <input id="mkSubUrl" class="input mono" placeholder="Submission URL" style="min-width:280px">
-            <input id="mkSubNotes" class="input" placeholder="Notes (optional)" style="min-width:220px">
-            <button class="wallet-btn wallet-btn--sm wallet-btn--solid" id="mkSubmit">Submit work</button>`;
+            <div class="mk-submit-form">
+                <label class="mk-sub-field mk-sub-field--wide">
+                    <span class="label">Work notes</span>
+                    <textarea id="mkSubNotes" class="input" rows="3" placeholder="Describe what you completed, include any handoff details…"></textarea>
+                </label>
+                <label class="mk-sub-field">
+                    <span class="label">Proof URL <span class="mk-optional">optional</span></span>
+                    <input id="mkSubUrl" class="input mono" placeholder="https://…">
+                </label>
+                <label class="mk-sub-field mk-sub-field--wide">
+                    <span class="label">Attachments <span class="mk-optional">optional</span></span>
+                    <input id="mkSubFiles" class="input mk-file-input" type="file" multiple>
+                    <span class="field-hint">Up to ${MAX_SUBMISSION_FILES} files, max ${formatBytes(MAX_RAW_SUBMISSION_BYTES)} each. Images are resized; any file type is accepted.</span>
+                </label>
+                <div id="mkSubPreview" class="mk-sub-preview"></div>
+                <p id="mkSubFileMsg" class="field-hint mk-form__status" role="status" aria-live="polite"></p>
+                <button class="wallet-btn wallet-btn--sm wallet-btn--solid" id="mkSubmit">Submit work</button>
+            </div>`;
+        document.getElementById("mkSubFiles").addEventListener("change", (event) => {
+            handleSubmissionFileInput(event.target);
+        });
         document.getElementById("mkSubmit").addEventListener("click", () => act("submit"));
     }
 
     // Owner path
     if (d.isOwner) {
         if (st === "submitted") {
-            // Approve (Submitted → PaymentPending payout bridge) is legal.
-            // Reject from Submitted is NOT (backend: Submitted→Rejected is
-            // not in can_transition) — shown only at "under review".
+            // The owner can approve the exact worker submission or reject
+            // it (both transitions are legal from Submitted after this
+            // change). Rejection releases the reservation.
             area.insertAdjacentHTML("beforeend", `
-                <input id="mkRevNotes" class="input" placeholder="Review notes" style="min-width:220px">
-                <button class="wallet-btn wallet-btn--sm wallet-btn--solid" id="mkApprove">Approve &amp; pay</button>`);
+                <input id="mkRevNotes" class="input" placeholder="Review notes (optional)" style="min-width:220px">
+                <button class="wallet-btn wallet-btn--sm wallet-btn--solid" id="mkApprove">Approve &amp; pay</button>
+                <button class="wallet-btn wallet-btn--sm wallet-btn--danger" id="mkReject">Reject</button>`);
             document.getElementById("mkApprove").addEventListener("click", () => act("review", "approve"));
+            document.getElementById("mkReject").addEventListener("click", () => act("review", "reject"));
             area.insertAdjacentHTML("beforeend", `
-                <span class="field-hint">Visible after the submission enters review (“under review”) — the engine rejects a direct Submitted→Rejected move.</span>`);
+                <span class="field-hint">Approving executes the reserved reward to the worker's submitted recipient. Rejecting releases the reservation.</span>`);
         } else if (st === "under-review") {
             area.insertAdjacentHTML("beforeend", `
                 <input id="mkRevNotes" class="input" placeholder="Review notes" style="min-width:220px">
@@ -311,9 +544,31 @@ async function act(kind, sub) {
     if (!actionSuffix) return;
     path += actionSuffix;
     let payload = {};
-    if (kind === "claim") { payload = { recipient_address: document.getElementById("mkClaimAddr").value.trim() }; }
-    else if (kind === "submit") { payload = { url: document.getElementById("mkSubUrl").value.trim(), notes: document.getElementById("mkSubNotes").value.trim() }; }
-    else if (kind === "review") { payload = { action: sub, notes: (document.getElementById("mkRevNotes")?.value || "").trim() }; }
+    if (kind === "claim") {
+        payload = { recipient_address: document.getElementById("mkClaimAddr").value.trim() };
+    } else if (kind === "submit") {
+        const fileInput = document.getElementById("mkSubFiles");
+        if (fileInput && fileInput.files && fileInput.files.length > 0) {
+            await handleSubmissionFileInput(fileInput);
+        }
+        const notes = document.getElementById("mkSubNotes").value.trim();
+        const url = document.getElementById("mkSubUrl").value.trim();
+        if (!notes && !url && PENDING_SUBMISSION_FILES.length === 0) {
+            const msg = document.getElementById("mkSubFileMsg");
+            if (msg) {
+                msg.setAttribute("role", "alert");
+                msg.textContent = "Add work notes, a proof URL, or at least one attachment.";
+            }
+            return;
+        }
+        payload = {
+            url,
+            notes,
+            submission_files: PENDING_SUBMISSION_FILES,
+        };
+    } else if (kind === "review") {
+        payload = { action: sub, notes: (document.getElementById("mkRevNotes")?.value || "").trim() };
+    }
 
     const btns = document.querySelectorAll("#mkActionArea .wallet-btn");
     btns.forEach((b) => (b.disabled = true));
@@ -439,7 +694,5 @@ async function boot() {
 
 boot().catch((error) => {
     console.error("Marketplace boot failed:", error);
-    $("mkState").innerHTML =
-        `<span class="status__dot" aria-hidden="true"></span>` +
-        `<span class="status__label">Marketplace — unavailable</span>`;
+    setMarketplaceState("status--off", "Marketplace — unavailable");
 });
