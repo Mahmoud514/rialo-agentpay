@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, DefaultBodyLimit, Query, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Form, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, patch, post},
@@ -406,6 +406,236 @@ fn wallet_integrity_check(user_id: u64) -> Result<(), String> {
     }
 }
 
+#[derive(Clone)]
+struct WalletRecoveryEntry {
+    user_id: u64,
+    expires: Instant,
+}
+
+static WALLET_RECOVERY: OnceLock<Mutex<HashMap<String, WalletRecoveryEntry>>> = OnceLock::new();
+
+fn wallet_recovery_tokens() -> &'static Mutex<HashMap<String, WalletRecoveryEntry>> {
+    WALLET_RECOVERY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn issue_wallet_recovery_token(user_id: u64) -> String {
+    let token = Uuid::new_v4().to_string();
+    let mut tokens = wallet_recovery_tokens().lock().unwrap();
+    let now = Instant::now();
+    tokens.retain(|_, entry| entry.expires > now);
+    tokens.insert(
+        token.clone(),
+        WalletRecoveryEntry {
+            user_id,
+            expires: now + Duration::from_secs(600),
+        },
+    );
+    token
+}
+
+fn take_wallet_recovery_token(token: &str) -> Option<u64> {
+    let mut tokens = wallet_recovery_tokens().lock().unwrap();
+    let now = Instant::now();
+    let entry = tokens.remove(token)?;
+    (entry.expires > now).then_some(entry.user_id)
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn wallet_recovery_page(login: &str, token: &str) -> axum::response::Html<String> {
+    let login = escape_html(login);
+    let token = escape_html(token);
+    axum::response::Html(format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wallet recovery | Rialo AgentPay</title>
+<style>
+:root{{color-scheme:dark}}body{{margin:0;background:#0c0f0a;color:#e7f0dc;font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;display:grid;place-items:center;min-height:100vh}}
+main{{width:min(620px,calc(100% - 32px));border:1px solid #3a4522;background:#11150c;padding:28px;border-radius:14px;box-shadow:0 18px 60px #0008}}
+h1{{font-size:20px;margin:0 0 10px;color:#caf76a}}p{{color:#b9c6a8}}code{{color:#caf76a}}button{{background:#caf76a;color:#0c0f0a;border:0;border-radius:8px;padding:12px 18px;font:700 13px ui-monospace,monospace;letter-spacing:.08em;cursor:pointer}}small{{display:block;margin-top:16px;color:#86927a}}
+</style></head><body><main>
+<h1>Wallet file missing</h1>
+<p>GitHub account <strong>@{login}</strong> has a registered Rialo wallet, but its key file is missing on this server. AgentPay refuses to silently replace wallet identity.</p>
+<p>You can create a <strong>new wallet</strong> only if the old wallet has no on-chain balance. This is a deliberate recovery step; the old wallet file cannot be reconstructed.</p>
+<form method="post" action="/auth/wallet-recover">
+<input type="hidden" name="token" value="{token}">
+<button type="submit">Create new wallet and continue</button>
+</form>
+<small>If the old wallet holds funds, recovery is refused. Contact the operator with the account name above.</small>
+</main></body></html>"#
+    ))
+}
+
+fn wallet_recovery_error_page(message: &str) -> axum::response::Html<String> {
+    let message = escape_html(message);
+    axum::response::Html(format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wallet recovery | Rialo AgentPay</title>
+<style>body{{margin:0;background:#0c0f0a;color:#e7f0dc;font:15px/1.5 ui-monospace,monospace;display:grid;place-items:center;min-height:100vh}}main{{width:min(620px,calc(100% - 32px));border:1px solid #5a2a2a;background:#150f0f;padding:28px;border-radius:14px}}h1{{font-size:20px;color:#ff9c8a}}a{{color:#caf76a}}</style></head>
+<body><main><h1>Recovery not completed</h1><p>{message}</p><p><a href="/auth/github">Try GitHub login again</a></p></main></body></html>"#
+    ))
+}
+
+#[derive(Deserialize)]
+struct WalletRecoveryForm {
+    token: String,
+}
+
+fn recovery_registry_runtime() -> &'static tokio::runtime::Runtime {
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("wallet recovery runtime")
+    })
+}
+
+fn mint_wallet_file(user_id: u64) -> Result<Keypair, String> {
+    let path = wallet_file(user_id);
+    if path.exists() {
+        return Err("WALLET_FILE_EXISTS: refusing to overwrite an existing wallet file".into());
+    }
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed).map_err(|e| format!("WALLET_RNG_FAILED: {e}"))?;
+    let keypair = rialo_s_keypair::keypair_from_seed(&seed)
+        .map_err(|e| format!("WALLET_KEYPAIR_FAILED: {e}"))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| format!("WALLET_CREATE_FAILED: {e}"))?;
+    rialo_s_keypair::write_keypair(&keypair, &mut file)
+        .map_err(|e| format!("WALLET_WRITE_FAILED: {e}"))?;
+    harden_wallet_permissions(&path);
+    Ok(keypair)
+}
+
+async fn recover_wallet(
+    State(state): State<AppState>,
+    Form(form): Form<WalletRecoveryForm>,
+) -> Response {
+    let user_id = match take_wallet_recovery_token(&form.token) {
+        Some(user_id) => user_id,
+        None => {
+            return wallet_recovery_error_page(
+                "This recovery link is invalid or expired. Start the GitHub login again.",
+            )
+            .into_response()
+        }
+    };
+
+    if wallet_file(user_id).exists() {
+        return wallet_recovery_error_page(
+            "A wallet file is present now; no replacement was made. Try logging in again.",
+        )
+        .into_response();
+    }
+
+    let old_pubkey = match tokio::task::spawn_blocking(move || {
+        recovery_registry_runtime()
+            .block_on(crate::pg_store::registry_get_user_wallet(user_id))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .expect("spawn_blocking join")
+    {
+        Ok(Some(pubkey)) => pubkey,
+        Ok(None) => {
+            return wallet_recovery_error_page(
+                "No registered wallet was found for this account; try logging in again.",
+            )
+            .into_response()
+        }
+        Err(e) => {
+            return wallet_recovery_error_page(&format!(
+                "The wallet registry is unavailable ({e}); recovery was not performed."
+            ))
+            .into_response()
+        }
+    };
+
+    // Never rotate a wallet that may still hold value. The old key file is
+    // gone; an on-chain balance means the operator must recover the file.
+    let old_for_balance = old_pubkey.clone();
+    let rialo = Arc::clone(&state.rialo);
+    let balance = tokio::task::spawn_blocking(move || rialo.balance(&old_for_balance)).await;
+    match balance {
+        Ok(Ok(amount)) if amount > 0.0 => {
+            return wallet_recovery_error_page(
+                "The registered wallet still has an on-chain balance. Recovery is refused to avoid losing funds; contact the operator.",
+            )
+            .into_response()
+        }
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
+            return wallet_recovery_error_page(&format!(
+                "Could not verify the old wallet balance ({}); recovery was not performed.",
+                e.code
+            ))
+            .into_response()
+        }
+        Err(e) => {
+            return wallet_recovery_error_page(&format!(
+                "Could not verify the old wallet balance ({e}); recovery was not performed."
+            ))
+            .into_response()
+        }
+    }
+
+    let keypair = match tokio::task::spawn_blocking(move || mint_wallet_file(user_id)).await {
+        Ok(Ok(keypair)) => keypair,
+        Ok(Err(e)) => {
+            return wallet_recovery_error_page(&format!("Could not create a new wallet: {e}"))
+                .into_response()
+        }
+        Err(e) => {
+            return wallet_recovery_error_page(&format!(
+                "Could not create a new wallet: {e}"
+            ))
+            .into_response()
+        }
+    };
+    let new_pubkey = keypair.pubkey().to_string();
+    let old_for_update = old_pubkey.clone();
+    let new_for_update = new_pubkey.clone();
+    let now = agents::now_unix();
+    let rotated = tokio::task::spawn_blocking(move || {
+        recovery_registry_runtime().block_on(crate::pg_store::registry_replace_user_wallet(
+            user_id,
+            &old_for_update,
+            &new_for_update,
+            now,
+        ))
+    })
+    .await;
+    match rotated {
+        Ok(Ok(())) => Redirect::temporary("/auth/github").into_response(),
+        Ok(Err(e)) => {
+            let _ = std::fs::remove_file(wallet_file(user_id));
+            wallet_recovery_error_page(&format!(
+                "The registry could not be updated ({}); recovery was rolled back.",
+                e
+            ))
+            .into_response()
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(wallet_file(user_id));
+            wallet_recovery_error_page(&format!(
+                "The registry task failed ({e}); recovery was rolled back."
+            ))
+            .into_response()
+        }
+    }
+}
+
 /// G21.12 — strict load/mint used by money paths in PG mode.
 /// PG is the source of truth: registered-but-file-missing refuses (no
 /// replacement). First mint (no file, no registry row) registers pubkey.
@@ -596,6 +826,7 @@ async fn main() {
     let app = Router::new()
         .route("/auth/github", get(github_login))
         .route("/auth/github/callback", get(github_callback))
+        .route("/auth/wallet-recover", post(recover_wallet))
         .route("/auth/logout", post(logout))
         .route("/api/me", get(current_user))
         .route("/api/faucet", post(faucet))
@@ -1266,32 +1497,36 @@ async fn github_callback(
         crate::pg_store::StorageMode::Postgres
     ) {
         let uid_for_blocking = user.id;
-        let addr_pubkey = tokio::task::spawn_blocking(move || {
+        let wallet_result = tokio::task::spawn_blocking(move || {
             load_wallet_strict(uid_for_blocking).map(|kp| kp.pubkey().to_string())
         })
         .await
-        .expect("spawn_blocking join")
-        .unwrap_or_else(|e| {
-            eprintln!("wallet integrity failure for user {uid_for_blocking}: {e}");
-            "WALLET_INTEGRITY".to_string()
-        });
-        if addr_pubkey == "WALLET_INTEGRITY" {
-            eprintln!(
-                "login blocked: wallet integrity failure for user {}",
-                user.id
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({
-                    "success": false,
-                    "error": {
-                        "code": "WALLET_INTEGRITY",
-                        "message": "Wallet integrity failure; contact the operator."
-                    }
-                })),
-            )
-                .into_response();
-        }
+        .expect("spawn_blocking join");
+        let addr_pubkey = match wallet_result {
+            Ok(addr) => addr,
+            Err(e) => {
+                eprintln!("wallet integrity failure for user {uid_for_blocking}: {e}");
+                if e.contains("WALLET_FILE_MISSING") {
+                    let token = issue_wallet_recovery_token(user.id);
+                    return wallet_recovery_page(&user.login, &token).into_response();
+                }
+                eprintln!(
+                    "login blocked: wallet integrity failure for user {}",
+                    user.id
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(serde_json::json!({
+                        "success": false,
+                        "error": {
+                            "code": "WALLET_INTEGRITY",
+                            "message": "Wallet integrity failure; contact the operator."
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        };
         (addr_pubkey, false)
     } else {
         let mut wallets = state.wallets.lock().unwrap();
