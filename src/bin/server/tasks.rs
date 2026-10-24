@@ -830,23 +830,54 @@ pub async fn my_tasks(State(state): State<AppState>, headers: HeaderMap) -> Resp
 
     if crate::pg_store::pg_is_authoritative() {
         let uid = user.id as i64;
-        let rows = tokio::task::block_in_place(|| {
-            crate::pg_store::pg_run(async {
-                let client = crate::pg_store::global_client().await;
-                client
-                    .query(
+        let mirror_url = std::env::var("DATABASE_URL").unwrap_or_default();
+        if mirror_url.is_empty() {
+            return api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "TASKS_UNAVAILABLE",
+                "Task list temporarily unavailable",
+            );
+        }
+        // Use a dedicated blocking connection rather than the shared
+        // request client: this read must never hold or wait on the global
+        // client mutex while a marketplace page is polling.
+        let rows = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| format!("mine rt: {e}"))?;
+            rt.block_on(async move {
+                let client = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    crate::pg_store::pg_connect(mirror_url.as_str()),
+                )
+                .await
+                .map_err(|_| "mine connect timeout (10s)".to_string())?
+                .map_err(|e| format!("mine connect: {e}"))?;
+                let rows = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    client.query(
                         "SELECT to_jsonb(t) AS doc FROM tasks_pg t \
                          WHERE t.owner_user_id = $1 OR t.worker_id = $1 \
                          ORDER BY t.updated_at DESC LIMIT 50",
                         &[&uid],
-                    )
-                    .await
-                    .map_err(|e| format!("tasks_pg mine: {e}"))
+                    ),
+                )
+                .await
+                .map_err(|_| "tasks_pg mine timeout (10s)".to_string())?
+                .map_err(|e| format!("tasks_pg mine: {e}"))?;
+                Ok::<Vec<serde_json::Value>, String>(
+                    rows.iter()
+                        .filter_map(|row| row.try_get::<_, serde_json::Value>("doc").ok())
+                        .collect(),
+                )
             })
-        });
-        let rows = match rows {
-            Ok(Ok(rows)) => rows,
-            Ok(Err(e)) => {
+        })
+        .await
+        .map_err(|e| format!("mine worker: {e}"));
+        let docs = match rows {
+            Ok(Ok(docs)) => docs,
+            Ok(Err(e)) | Err(e) => {
                 eprintln!("[tasks] mine unavailable (fail closed): {e}");
                 return api_error(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -854,18 +885,9 @@ pub async fn my_tasks(State(state): State<AppState>, headers: HeaderMap) -> Resp
                     "Task list temporarily unavailable",
                 );
             }
-            Err(e) => {
-                eprintln!("[tasks] mine unavailable (fail closed): {e:?}");
-                return api_error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "TASKS_UNAVAILABLE",
-                    "Task list temporarily unavailable",
-                );
-            }
         };
-        let tasks: Vec<serde_json::Value> = rows
+        let tasks: Vec<serde_json::Value> = docs
             .into_iter()
-            .filter_map(|row| row.try_get::<_, serde_json::Value>("doc").ok())
             .filter_map(|doc| serde_json::from_value::<Task>(doc).ok())
             .map(|task| task_to_summary(&task))
             .collect();
