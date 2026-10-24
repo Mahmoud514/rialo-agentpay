@@ -870,6 +870,7 @@ async fn main() {
             get(tasks::list_tasks).post(tasks::create_task),
         )
         .route("/api/tasks/open", get(tasks::list_tasks))
+        .route("/api/tasks/mine", get(tasks::my_tasks))
         .route("/api/tasks/{id}", get(tasks::get_task))
         .route("/api/tasks/{id}/cancel", post(tasks::cancel_task))
         .route("/api/tasks/{id}/claim", post(tasks::claim_task))

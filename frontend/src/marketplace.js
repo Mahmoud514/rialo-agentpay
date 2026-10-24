@@ -290,6 +290,7 @@ let LAST_LIST = [];
 let CURRENT_LOGIN = "";
 let MARKETPLACE_POLL_TIMER = null;
 const NOTIFIED_SUBMISSIONS = new Set();
+const MY_TASK_STATUS = new Map();
 let TOAST_TASKS = [];
 
 function hideOwnerToast() {
@@ -298,6 +299,58 @@ function hideOwnerToast() {
     toast.hidden = true;
     toast.innerHTML = "";
     TOAST_TASKS = [];
+}
+
+function showWorkerToast(task, outcome) {
+    const toast = $("mkOwnerToast");
+    if (!toast || !task) return;
+    const title =
+        outcome === "paid"
+            ? "Payment sent"
+            : outcome === "rejected"
+              ? "Task rejected"
+              : "Payment failed";
+    const copy =
+        outcome === "paid"
+            ? `${task.title || "Your task"} was approved and paid.`
+            : outcome === "rejected"
+              ? `The owner rejected ${task.title || "your task"}.`
+              : `Payment for ${task.title || "your task"} did not complete.`;
+    toast.innerHTML = `
+        <span class="mk-toast__dot" aria-hidden="true"></span>
+        <div class="mk-toast__copy">
+            <strong>${esc(title)}</strong>
+            <span>${esc(copy)}</span>
+        </div>
+        <button type="button" class="wallet-btn wallet-btn--sm wallet-btn--solid" id="mkToastReview">View task</button>
+        <button type="button" class="mk-toast__close" id="mkToastClose" aria-label="Dismiss task notification">×</button>`;
+    toast.hidden = false;
+    const review = document.getElementById("mkToastReview");
+    if (review) {
+        review.addEventListener("click", () => {
+            hideOwnerToast();
+            if (task.task_id) openDetail(task.task_id);
+        });
+    }
+    const close = document.getElementById("mkToastClose");
+    if (close) close.addEventListener("click", hideOwnerToast);
+}
+
+async function loadMyTaskNotifications(initial = false) {
+    if (!CURRENT_LOGIN) return;
+    const { ok, data } = await api("/api/tasks/mine");
+    if (!ok || !Array.isArray(data?.tasks)) return;
+    for (const task of data.tasks) {
+        if (!task || !task.task_id) continue;
+        const status = statusToken(task.status);
+        const previous = MY_TASK_STATUS.get(task.task_id);
+        MY_TASK_STATUS.set(task.task_id, status);
+        if (initial || !previous || previous === status) continue;
+        if (task.worker_name !== CURRENT_LOGIN) continue;
+        if (status === "paid") showWorkerToast(task, "paid");
+        else if (status === "rejected") showWorkerToast(task, "rejected");
+        else if (status === "payment-failed") showWorkerToast(task, "payment-failed");
+    }
 }
 
 function showOwnerToast(tasks) {
@@ -339,6 +392,9 @@ function startMarketplacePolling() {
         if (form && form.contains(document.activeElement)) return;
         loadTasks({ silent: true }).catch((error) => {
             console.warn("Marketplace background refresh failed:", error);
+        });
+        loadMyTaskNotifications().catch((error) => {
+            console.warn("Task notification refresh failed:", error);
         });
     }, 15000);
 }
@@ -761,6 +817,7 @@ async function boot() {
     }
 
     await loadTasks();
+    await loadMyTaskNotifications(true);
     await setupCreate(authed);
     startMarketplacePolling();
 }

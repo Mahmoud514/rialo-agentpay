@@ -819,6 +819,76 @@ fn is_terminal_task_status(status: &str) -> bool {
 
 // API Handlers
 
+/// List tasks visible to the signed-in user, including terminal states.
+/// The public marketplace board intentionally excludes terminal tasks; this
+/// endpoint exists so owner/worker clients can observe approved/rejected
+/// outcomes without polluting the open board.
+pub async fn my_tasks(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(user) = session_user(&state, &headers) else {
+        return api_error(StatusCode::UNAUTHORIZED, "NOT_AUTHENTICATED", "Not logged in");
+    };
+
+    if crate::pg_store::pg_is_authoritative() {
+        let uid = user.id as i64;
+        let rows = tokio::task::block_in_place(|| {
+            crate::pg_store::pg_run(async {
+                let client = crate::pg_store::global_client().await;
+                client
+                    .query(
+                        "SELECT to_jsonb(t) AS doc FROM tasks_pg t \
+                         WHERE t.owner_user_id = $1 OR t.worker_id = $1 \
+                         ORDER BY t.updated_at DESC LIMIT 50",
+                        &[&uid],
+                    )
+                    .await
+                    .map_err(|e| format!("tasks_pg mine: {e}"))
+            })
+        });
+        let rows = match rows {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(e)) => {
+                eprintln!("[tasks] mine unavailable (fail closed): {e}");
+                return api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "TASKS_UNAVAILABLE",
+                    "Task list temporarily unavailable",
+                );
+            }
+            Err(e) => {
+                eprintln!("[tasks] mine unavailable (fail closed): {e:?}");
+                return api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "TASKS_UNAVAILABLE",
+                    "Task list temporarily unavailable",
+                );
+            }
+        };
+        let tasks: Vec<serde_json::Value> = rows
+            .into_iter()
+            .filter_map(|row| row.try_get::<_, serde_json::Value>("doc").ok())
+            .filter_map(|doc| serde_json::from_value::<Task>(doc).ok())
+            .map(|task| task_to_summary(&task))
+            .collect();
+        return Json(serde_json::json!({ "tasks": tasks, "count": tasks.len() })).into_response();
+    }
+
+    let mut tasks: Vec<Task> = Vec::new();
+    if let Ok(entries) = fs::read_dir(tasks_dir()) {
+        for entry in entries.flatten() {
+            if let Ok(bytes) = fs::read(entry.path()) {
+                if let Ok(task) = serde_json::from_slice::<Task>(&bytes) {
+                    if task.owner_user_id == user.id || task.worker_id == Some(user.id) {
+                        tasks.push(task);
+                    }
+                }
+            }
+        }
+    }
+    tasks.sort_by_key(|task| std::cmp::Reverse(task.updated_at));
+    let tasks: Vec<serde_json::Value> = tasks.iter().take(50).map(task_to_summary).collect();
+    Json(serde_json::json!({ "tasks": tasks, "count": tasks.len() })).into_response()
+}
+
 /// List tasks
 pub async fn list_tasks(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let user = session_user(&state, &headers);
