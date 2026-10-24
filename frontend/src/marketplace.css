@@ -81,6 +81,17 @@
     color: var(--text-2);
 }
 
+.mk-payout {
+    flex-basis: 100%;
+    color: var(--text-3);
+    overflow-wrap: anywhere;
+}
+
+.mk-payout code {
+    color: var(--lime);
+    font-size: 10px;
+}
+
 .mk-row__reward {
     flex: none;
     color: var(--lime);

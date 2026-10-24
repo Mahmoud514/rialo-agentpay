@@ -428,6 +428,7 @@ function renderDetail(t) {
                 <span>Reward: <strong>${esc(fmtRlo(t.reward_rlo))} RLO</strong></span>
                 <span>Owner: ${esc(t.owner_name)}</span>
                 ${t.worker_name ? `<span>Worker: ${esc(t.worker_name)}</span>` : ""}
+                ${t.worker_recipient ? `<span class="mk-payout">Worker payout: <code>${esc(t.worker_recipient)}</code></span>` : ""}
                 <span>Created: ${esc(fmtDate(t.created_at))}</span>
                 <span>Updated: ${esc(fmtDate(t.updated_at))}</span>
             </div>
