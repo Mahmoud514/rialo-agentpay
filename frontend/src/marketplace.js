@@ -317,9 +317,9 @@ async function act(kind, sub) {
  * CREATE (owners)
  * ------------------------------------------------------------------ */
 
-async function setupCreate() {
+async function setupCreate(authed = document.body.classList.contains("is-authed")) {
     const card = $("mkCreateCard");
-    if (!document.body.classList.contains("is-authed")) {
+    if (!authed) {
         card.hidden = true;
         return;
     }
@@ -333,6 +333,7 @@ async function setupCreate() {
         $("mkAgentHint").textContent = "Create an agent first (Agents page) to offer tasks.";
         return;
     }
+    sel.disabled = false;
     sel.innerHTML = data.agents
         .map((a) => `<option value="${esc(a.agent_id)}">${esc(a.name || a.agent_id)}</option>`)
         .join("");
@@ -375,5 +376,28 @@ document.getElementById("detailClose").addEventListener("click", () => {
     CURRENT_DETAIL = null;
 });
 
-loadTasks();
-setupCreate();
+async function boot() {
+    // The board itself is public; only the navbar chip and owner tools
+    // depend on the session. Hydrate auth BEFORE rendering any state that
+    // keys off body.is-authed (otherwise an existing session looks like a
+    // logout and the create card stays hidden).
+    const githubLogin = document.querySelector(".github-login");
+    let authed = false;
+    try {
+        const me = await AgentPayAuth.fetchMe();
+        authed = AgentPayAuth.renderLoginButton(githubLogin, me);
+    } catch (error) {
+        console.error("Failed to load marketplace auth state:", error);
+        AgentPayAuth.renderLoginButton(githubLogin, null);
+    }
+
+    await loadTasks();
+    await setupCreate(authed);
+}
+
+boot().catch((error) => {
+    console.error("Marketplace boot failed:", error);
+    $("mkState").innerHTML =
+        `<span class="status__dot" aria-hidden="true"></span>` +
+        `<span class="status__label">Marketplace — unavailable</span>`;
+});
