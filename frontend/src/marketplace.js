@@ -116,6 +116,11 @@ async function loadTasks() {
         $("mkState").innerHTML =
             `<span class="status__dot" aria-hidden="true"></span>` +
             `<span class="status__label">Marketplace — empty</span>`;
+        const createMsg = $("mkCreateMsg");
+        if (createMsg) {
+            createMsg.textContent = "";
+            createMsg.removeAttribute("role");
+        }
         body.innerHTML = `
             <div class="dash-empty" role="status">
                 <span class="label na">No open tasks</span>
@@ -327,6 +332,11 @@ async function act(kind, sub) {
     // Success: refresh detail + list from the engine (server verdict shown).
     await openDetail(d.id);
     await loadTasks();
+    const createMsg = $("mkCreateMsg");
+    if (createMsg) {
+        createMsg.textContent = "";
+        createMsg.removeAttribute("role");
+    }
 }
 
 /* ------------------------------------------------------------------ *
