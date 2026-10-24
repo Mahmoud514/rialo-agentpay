@@ -459,6 +459,14 @@ fn action_read_error(failure: TaskReadFailure) -> axum::response::Response {
     }
 }
 
+fn load_policy_for_task(agent_id: &Uuid) -> Result<Option<AgentPolicy>, String> {
+    if crate::pg_store::pg_is_authoritative() {
+        return crate::agents::load_policy_for_agent_pg(agent_id)
+            .map_err(|e| format!("pg policy read: {e}"));
+    }
+    load_policy_for_agent(agent_id).map_err(|e| format!("policy read: {e}"))
+}
+
 /// Load the paying agent for an action. PG is authoritative for the agent
 /// record in PG mode; fall back to the durable row instead of failing on a
 /// missing local JSON mirror. The private key remains in its separate
@@ -1747,17 +1755,23 @@ pub async fn review_task(
                 }
             };
 
-            let policy = match load_policy_for_agent(&policy_uuid) {
-                Ok(Some(p)) => match resolve_effective_policy_for_agent(p, &policy_uuid) {
-                    Ok(ep) => ep,
-                    Err(_) => {
-                        return api_error(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "POLICY_HIERARCHY_INVALID",
-                            "Agent policy hierarchy resolution failed",
-                        );
+            let policy = match load_policy_for_task(&policy_uuid) {
+                Ok(Some(p)) => {
+                    if crate::pg_store::pg_is_authoritative() {
+                        p
+                    } else {
+                        match resolve_effective_policy_for_agent(p, &policy_uuid) {
+                            Ok(ep) => ep,
+                            Err(_) => {
+                                return api_error(
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    "POLICY_HIERARCHY_INVALID",
+                                    "Agent policy hierarchy resolution failed",
+                                );
+                            }
+                        }
                     }
-                },
+                }
                 Ok(None) => {
                     return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -1765,7 +1779,8 @@ pub async fn review_task(
                         "Task owner agent has no policy",
                     );
                 }
-                Err(_) => {
+                Err(e) => {
+                    eprintln!("[tasks] owner policy unavailable: {e}");
                     return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "POLICY_READ_ERROR",
