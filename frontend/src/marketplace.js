@@ -32,11 +32,24 @@ function fmtRlo(v) {
     return n.toLocaleString("en-US", { maximumFractionDigits: 9 });
 }
 
-/* Backend status strings are Debug-lowercase ("in progress", "under
- * review", …). statusToken is for CSS/DOM tokens ONLY — spacing→dash;
- * raw status values always flow untouched into API calls/logs. */
+/* Backend status strings are Debug-lowercase ("inprogress",
+ * "underreview", …), with older payloads possibly using spaces. Normalize
+ * to the kebab tokens the action matrix and CSS understand; raw status
+ * values always flow untouched into API calls/logs. */
 function statusToken(status) {
-    return String(status ?? "").trim().toLowerCase().replace(/\s+/g, "-");
+    const normalized = String(status ?? "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+    const aliases = {
+        inprogress: "in-progress",
+        underreview: "under-review",
+        revisionrequested: "revision-requested",
+        paymentpending: "payment-pending",
+        paymentfailed: "payment-failed",
+    };
+    return aliases[normalized] || normalized;
+}
+
+function statusLabel(status) {
+    return statusToken(status).replace(/-/g, " ");
 }
 
 function fmtDate(sec) {
@@ -124,7 +137,7 @@ async function loadTasks() {
                         <div class="mk-row__meta">
                             <span class="mono">${esc(t.task_id)}</span>
                             <span>owner: ${esc(t.owner_name)}</span>
-                            <span class="mk-pill mk-pill--${esc(statusToken(t.status))}">${esc(t.status)}</span>
+                            <span class="mk-pill mk-pill--${esc(statusToken(t.status))}">${esc(statusLabel(t.status))}</span>
                             <span>${esc(fmtDate(t.created_at))}</span>
                         </div>
                     </div>
@@ -182,7 +195,7 @@ async function openDetail(taskId) {
 
     const t = data.task || {};
     CURRENT_DETAIL = { id: t.task_id, isOwner: !!data.is_owner, isWorker: !!data.is_worker, status: t.status };
-    $("detailStatus").textContent = t.status || "?";
+    $("detailStatus").textContent = t.status ? statusLabel(t.status) : "?";
     renderDetail(t);
 }
 
@@ -281,7 +294,7 @@ function renderDetail(t) {
     }
 
     if (!area.children.length) {
-        area.innerHTML = `<span class="field-hint">No actions available for your role at status “${esc(d.status)}”.</span>`;
+        area.innerHTML = `<span class="field-hint">No actions available for your role at status “${esc(statusLabel(d.status))}”.</span>`;
     }
 }
 
@@ -289,6 +302,9 @@ async function act(kind, sub) {
     const d = CURRENT_DETAIL;
     if (!d) return;
     let path = `/api/tasks/${encodeURIComponent(d.id)}`;
+    const actionSuffix = { claim: "/claim", submit: "/submit", review: "/review", cancel: "/cancel" }[kind];
+    if (!actionSuffix) return;
+    path += actionSuffix;
     let payload = {};
     if (kind === "claim") { payload = { recipient_address: document.getElementById("mkClaimAddr").value.trim() }; }
     else if (kind === "submit") { payload = { url: document.getElementById("mkSubUrl").value.trim(), notes: document.getElementById("mkSubNotes").value.trim() }; }
