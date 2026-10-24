@@ -1086,7 +1086,7 @@ impl RialoConfig {
         };
         let params = serde_json::json!({
             "version": 0u16,
-            "block_height": height,
+            "blockHeight": height,
         });
         let Ok(result) = self.rpc_read("getBlock", &params) else {
             return;
