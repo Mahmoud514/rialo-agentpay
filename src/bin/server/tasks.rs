@@ -847,18 +847,25 @@ pub async fn my_tasks(State(state): State<AppState>, headers: HeaderMap) -> Resp
                 .build()
                 .map_err(|e| format!("mine rt: {e}"))?;
             rt.block_on(async move {
-                let client = crate::pg_store::pg_connect(mirror_url.as_str())
-                    .await
-                    .map_err(|e| format!("mine connect: {e}"))?;
-                let rows = client
-                    .query(
+                let client = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    crate::pg_store::pg_connect(mirror_url.as_str()),
+                )
+                .await
+                .map_err(|_| "mine connect timeout (10s)".to_string())?
+                .map_err(|e| format!("mine connect: {e}"))?;
+                let rows = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    client.query(
                         "SELECT to_jsonb(t) AS doc FROM tasks_pg t \
                          WHERE t.owner_user_id = $1 OR t.worker_id = $1 \
                          ORDER BY t.updated_at DESC LIMIT 50",
                         &[&uid],
-                    )
-                    .await
-                    .map_err(|e| format!("tasks_pg mine: {e}"))?;
+                    ),
+                )
+                .await
+                .map_err(|_| "tasks_pg mine timeout (10s)".to_string())?
+                .map_err(|e| format!("tasks_pg mine: {e}"))?;
                 Ok::<Vec<serde_json::Value>, String>(
                     rows.iter()
                         .filter_map(|row| row.try_get::<_, serde_json::Value>("doc").ok())
