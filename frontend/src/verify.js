@@ -48,6 +48,37 @@ function setHint(text) {
     if (el) el.textContent = text || "";
 }
 
+/* Copy the complete signature, never a display-abbreviated form. The
+ * clipboard API is used only on a secure page; the fallback keeps the
+ * public verifier usable on plain-http local previews. */
+function copySignature(value) {
+    const text = value === null || value === undefined ? "" : String(value);
+    if (!text) return;
+    const done = () => setHint("Signature copied to clipboard.");
+    const fallback = () => {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        try {
+            document.execCommand("copy");
+            done();
+        } catch (_) {
+            setHint("Copy unavailable — select the signature manually.");
+        } finally {
+            area.remove();
+        }
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done, fallback);
+    } else {
+        fallback();
+    }
+}
+
 const esc = (v) => (AgentPayAuth && AgentPayAuth.escapeHtml ? AgentPayAuth.escapeHtml(v) : String(v ?? ""));
 
 /* ------------------------------------------------------------------ *
@@ -63,27 +94,32 @@ function formatKelvin(value) {
     return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
+/* Non-amount integers (slot, height, fee) use the same grouped style. */
+function formatInteger(value) {
+    if (value === null || value === undefined) return null;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+}
+
 /* kelvin -> RLO display (RLO = kelvin / 1e9, same ratio the backend uses). */
 function formatRloFromKelvin(value) {
     if (value === null || value === undefined) return null;
     const n = Number(value) / 1e9;
     if (!Number.isFinite(n)) return null;
-    return n.toLocaleString("en-US", { maximumFractionDigits: 6 });
+    return n.toLocaleString("en-US", { maximumFractionDigits: 9 });
 }
 
-/* POSIX-seconds timestamp -> compact human time; null -> "—". The
- * source instant is exposed on the cell's title (UTC ISO) so the local
- * display is never taken at face value. */
+/* POSIX-seconds timestamp -> explicit UTC display. Chain time is never
+ * presented as a local wall clock without saying which clock it is;
+ * null stays an honest em dash. */
 function formatTime(posix) {
     if (posix === null || posix === undefined) return { text: "—", title: "" };
     const ms = Number(posix) * 1000;
     const date = new Date(ms);
     if (Number.isNaN(date.getTime())) return { text: "—", title: "" };
-    const stamp = date.toLocaleString("en-US", {
-        year: "numeric", month: "short", day: "numeric",
-        hour: "2-digit", minute: "2-digit",
-    });
-    return { text: stamp, title: `UTC ${date.toISOString().replace("T", " ").slice(0, 19)}` };
+    const stamp = date.toISOString().replace("T", " ").slice(0, 19);
+    return { text: `${stamp} UTC`, title: "Block time reported by the chain (UTC)" };
 }
 
 /* ------------------------------------------------------------------ *
@@ -125,12 +161,14 @@ function renderVerified(v) {
     const amount = formatKelvin(v.amount_kelvin);
     const rlo = formatRloFromKelvin(v.amount_kelvin);
     const time = formatTime(v.block_time);
-    const amountCell = amount === null || rlo === null
-        ? cell(amount)
-        : "<span class=\"verify-cell\">" + esc(amount) + "</span> " +
-          "<span class=\"verify-cell verify-cell--sub\">≈ " + esc(rlo) + " RLO</span>";
+    const slot = formatInteger(v.slot);
+    const height = formatInteger(v.block_height);
+    const fee = formatInteger(v.fee);
+    const amountMain = rlo === null ? "—" : `${esc(rlo)} <span class="verify-unit">RLO</span>`;
+    const amountSub = amount === null ? "—" : `${esc(amount)} kelvin`;
 
     setStatePill(tone, `Verify — ${executed ? "verified" : "verified (failed on-chain)"}`);
+    setHint("");
 
     const body = document.getElementById("verifyBody");
     if (!body) return;
@@ -140,20 +178,45 @@ function renderVerified(v) {
             <span class="verify-verdict__note">The Rialo Testnet node reports this transaction.</span>
         </div>
         ${nodeErr}
+        <div class="verify-summary" aria-label="Transaction summary">
+            <div class="verify-summary__item verify-summary__item--amount">
+                <span class="verify-summary__label">Amount</span>
+                <strong class="verify-summary__value">${amountMain}</strong>
+                <span class="verify-summary__meta">${amountSub}</span>
+            </div>
+            <div class="verify-summary__item">
+                <span class="verify-summary__label">Execution</span>
+                <strong class="verify-summary__value verify-summary__value--${executed ? "ok" : "bad"}">${executed ? "executed" : "not executed"}</strong>
+                <span class="verify-summary__meta">${v.error ? esc(v.error) : "No on-chain error"}</span>
+            </div>
+            <div class="verify-summary__item">
+                <span class="verify-summary__label">Block</span>
+                <strong class="verify-summary__value">${height === null ? "—" : esc(height)}</strong>
+                <span class="verify-summary__meta">slot ${slot === null ? "—" : esc(slot)}</span>
+            </div>
+        </div>
+        <div class="verify-detail-head">
+            <span class="verify-detail-head__title">Transaction details</span>
+            <span class="verify-detail-head__status mono">${esc(v.status)}</span>
+        </div>
         <dl class="kv verify-kv">
-            ${kvRow("Signature", signature)}
+            ${kvRow("Signature", `<span class="verify-signature">${signature}<button type="button" class="verify-copy" id="copySignature" aria-label="Copy full transaction signature">Copy</button></span>`)}
             ${kvRow("Status", `<span class="verify-cell verify-cell--neutral">${esc(v.status)}</span>`)}
             ${kvRow("Executed", executedCell)}
-            ${kvRow("Slot", cell(v.slot))}
-            ${kvRow("Block&nbsp;Height", cell(v.block_height))}
+            ${kvRow("Slot", cell(slot))}
+            ${kvRow("Block&nbsp;Height", cell(height))}
             ${kvRow("Block&nbsp;Time", time.title
                 ? `<span class="verify-cell verify-cell--time" title="${esc(time.title)}">${esc(time.text)}</span>`
                 : cell(null))}
-            ${kvRow("Fee&nbsp;(Kelvin)", cell(v.fee))}
+            ${kvRow("Fee&nbsp;(Kelvin)", cell(fee))}
             ${kvRow("Payer", cell(v.payer, " verify-cell--break"))}
             ${kvRow("Recipient", cell(v.recipient, " verify-cell--break"))}
-            ${kvRow("Amount&nbsp;(Kelvin)", amountCell)}
+            ${kvRow("Amount&nbsp;(Kelvin)", cell(amount))}
         </dl>`;
+
+    document.getElementById("copySignature")?.addEventListener("click", () => {
+        copySignature(v.signature);
+    });
 }
 
 /* NO_STATUS: 200 with the canonical no_status record — the node
@@ -161,6 +224,7 @@ function renderVerified(v) {
  * never a 404, never an absence verdict. All chain facts stay "—". */
 function renderNoStatus(v) {
     setStatePill("status--warn", "Verify — no status yet");
+    setHint("");
     const body = document.getElementById("verifyBody");
     if (!body) return;
     body.innerHTML = `

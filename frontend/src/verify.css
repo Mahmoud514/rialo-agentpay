@@ -39,6 +39,7 @@
 
 .verify-hint {
     margin: var(--s-3) 0 0;
+    min-height: 18px;
     font-size: 12px;
     color: var(--text-3);
 }
@@ -120,6 +121,142 @@
 .verify-cell--time { cursor: help; }
 
 /* --------------------------------------------------------------------------
+   RECEIPT SUMMARY — the three facts a reader needs before the full record:
+   the amount, whether it executed, and the block it belongs to. Values are
+   rendered from the canonical DTO only; this layer is presentation.
+   -------------------------------------------------------------------------- */
+.verify-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1px;
+    margin: 0 0 var(--s-5);
+    overflow: hidden;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--line-strong);
+}
+
+.verify-summary__item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-width: 0;
+    padding: var(--s-4) var(--s-5);
+    background: var(--bg-raise);
+}
+
+.verify-summary__item--amount {
+    background:
+        linear-gradient(135deg, rgba(var(--lime-rgb), 0.09), transparent 70%),
+        var(--bg-raise);
+}
+
+.verify-summary__label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+.verify-summary__value {
+    display: block;
+    margin: var(--s-1) 0;
+    font-family: var(--font-mono);
+    font-size: clamp(20px, 2.5vw, 28px);
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+.verify-summary__value--ok { color: var(--lime); }
+.verify-summary__value--bad { color: var(--red); }
+
+.verify-summary__meta {
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-3);
+    overflow-wrap: anywhere;
+}
+
+.verify-unit {
+    font-size: 0.56em;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    color: var(--text-3);
+}
+
+.verify-detail-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-3);
+    margin: 0 0 var(--s-4);
+    padding-top: var(--s-4);
+    border-top: 1px solid var(--line);
+}
+
+.verify-detail-head__title {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-2);
+}
+
+.verify-detail-head__status {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+}
+
+.verify-signature {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    min-width: 0;
+}
+
+.verify-signature .verify-cell {
+    min-width: 0;
+    word-break: break-all;
+}
+
+.verify-copy {
+    flex: none;
+    margin-top: -2px;
+    padding: 2px 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--bg-raise);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-2);
+    cursor: pointer;
+}
+
+.verify-copy:hover {
+    color: var(--text);
+    border-color: rgba(var(--lime-rgb), 0.4);
+}
+
+.verify-copy:focus-visible {
+    outline: 2px solid var(--lime);
+    outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
    RESPONSIVE — the project's existing breakpoint scale (1024 / 760 /
    560 / 420 from app.css & landing.css).
    -------------------------------------------------------------------------- */
@@ -127,6 +264,7 @@
 @media (max-width: 760px) {
     .verify-form__field { flex-basis: 100%; }
     .verify-form__actions .wallet-btn { width: 100%; }
+    .verify-summary { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 420px) {
