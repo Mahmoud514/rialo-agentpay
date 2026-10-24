@@ -394,6 +394,68 @@ fn read_task(task_id: &str) -> Result<Task, std::io::Error> {
     Ok(task)
 }
 
+#[derive(Debug)]
+enum TaskReadFailure {
+    NotFound,
+    Unavailable(String),
+}
+
+/// Action paths (claim/submit/review/cancel) must be able to operate on a
+/// durable task whose local JSON was lost when an ephemeral host restarted.
+/// Keep FS primary when present; otherwise recover the same row from
+/// `tasks_pg`. A PG query failure is an availability error, never a 404.
+fn read_task_for_action(task_id: &str) -> Result<Task, TaskReadFailure> {
+    if let Ok(task) = read_task(task_id) {
+        return Ok(task);
+    }
+    if !crate::pg_store::pg_is_authoritative() {
+        return Err(TaskReadFailure::NotFound);
+    }
+    let tid = task_id.to_string();
+    let as_json = tokio::task::block_in_place(|| {
+        crate::pg_store::pg_run(async {
+            let client = crate::pg_store::global_client().await;
+            let row = client
+                .query_opt(
+                    "SELECT to_jsonb(t) AS doc FROM tasks_pg t WHERE t.task_id = $1",
+                    &[&tid],
+                )
+                .await
+                .map_err(|e| format!("tasks_pg action get: {e}"))?;
+            Ok::<Option<serde_json::Value>, String>(
+                row.map(|r| r.get::<_, serde_json::Value>("doc")),
+            )
+        })
+    });
+    match as_json {
+        Ok(Ok(Some(doc))) => serde_json::from_value(doc)
+            .map_err(|e| TaskReadFailure::Unavailable(format!("tasks_pg decode: {e}"))),
+        Ok(Ok(None)) => Err(TaskReadFailure::NotFound),
+        Ok(Err(e)) => Err(TaskReadFailure::Unavailable(e)),
+        Err(e) => Err(TaskReadFailure::Unavailable(format!(
+            "tasks_pg action worker: {e:?}"
+        ))),
+    }
+}
+
+fn action_read_error(failure: TaskReadFailure) -> axum::response::Response {
+    match failure {
+        TaskReadFailure::NotFound => api_error(
+            axum::http::StatusCode::NOT_FOUND,
+            "TASK_NOT_FOUND",
+            "Not found",
+        ),
+        TaskReadFailure::Unavailable(detail) => {
+            eprintln!("[tasks] action task read unavailable: {detail}");
+            api_error(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "TASK_UNAVAILABLE",
+                "Task temporarily unavailable",
+            )
+        }
+    }
+}
+
 fn read_reservation(task_id: &str) -> Result<TaskReservation, std::io::Error> {
     let bytes = fs::read(reservation_path(task_id))?;
     serde_json::from_slice(&bytes).map_err(|e| std::io::Error::other(format!("deserialize: {e}")))
@@ -1318,9 +1380,9 @@ pub async fn cancel_task(
     };
 
     let _guard = agents::store_lock().lock().unwrap();
-    let mut task = match read_task(task_id) {
+    let mut task = match read_task_for_action(task_id) {
         Ok(t) => t,
-        Err(_) => return api_error(StatusCode::NOT_FOUND, "TASK_NOT_FOUND", "Not found"),
+        Err(e) => return action_read_error(e),
     };
 
     if task.owner_user_id != user.id {
@@ -1390,9 +1452,9 @@ pub async fn claim_task(
     };
 
     let _guard = agents::store_lock().lock().unwrap();
-    let mut task = match read_task(task_id) {
+    let mut task = match read_task_for_action(task_id) {
         Ok(t) => t,
-        Err(_) => return api_error(StatusCode::NOT_FOUND, "TASK_NOT_FOUND", "Not found"),
+        Err(e) => return action_read_error(e),
     };
 
     if task.owner_user_id == user.id {
@@ -1504,9 +1566,9 @@ pub async fn submit_task(
     };
 
     let _guard = agents::store_lock().lock().unwrap();
-    let mut task = match read_task(&task_id) {
+    let mut task = match read_task_for_action(&task_id) {
         Ok(t) => t,
-        Err(_) => return api_error(StatusCode::NOT_FOUND, "TASK_NOT_FOUND", "Not found"),
+        Err(e) => return action_read_error(e),
     };
 
     if task.worker_id != Some(user.id) {
@@ -1588,9 +1650,9 @@ pub async fn review_task(
     };
 
     let _guard = agents::store_lock().lock().unwrap();
-    let mut task = match read_task(&task_id) {
+    let mut task = match read_task_for_action(&task_id) {
         Ok(t) => t,
-        Err(_) => return api_error(StatusCode::NOT_FOUND, "TASK_NOT_FOUND", "Not found"),
+        Err(e) => return action_read_error(e),
     };
 
     if task.owner_user_id != user.id {
@@ -1824,9 +1886,9 @@ pub async fn recover_task_payout(
     let _guard = agents::store_lock()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let task = match read_task(&id) {
+    let task = match read_task_for_action(&id) {
         Ok(t) => t,
-        Err(_) => return api_error(StatusCode::NOT_FOUND, "TASK_NOT_FOUND", "Not found"),
+        Err(e) => return action_read_error(e),
     };
     if task.owner_user_id != user.id {
         return api_error(StatusCode::FORBIDDEN, "NOT_TASK_OWNER", "Not your task");
