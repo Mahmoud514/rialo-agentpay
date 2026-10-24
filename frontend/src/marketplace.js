@@ -242,13 +242,13 @@ function renderDetail(t) {
     if (st === "open" && !d.isOwner) {
         area.innerHTML = `
             <input id="mkClaimAddr" class="input mono" placeholder="Your RLO recipient address" style="min-width:280px">
-            <button class="wallet-btn wallet-btn--sm" id="mkClaim">Claim task</button>`;
+            <button class="wallet-btn wallet-btn--sm wallet-btn--solid" id="mkClaim">Claim task</button>`;
         document.getElementById("mkClaim").addEventListener("click", () => act("claim"));
     } else if (st === "in-progress" && d.isWorker) {
         area.innerHTML = `
             <input id="mkSubUrl" class="input mono" placeholder="Submission URL" style="min-width:280px">
             <input id="mkSubNotes" class="input" placeholder="Notes (optional)" style="min-width:220px">
-            <button class="wallet-btn wallet-btn--sm" id="mkSubmit">Submit work</button>`;
+            <button class="wallet-btn wallet-btn--sm wallet-btn--solid" id="mkSubmit">Submit work</button>`;
         document.getElementById("mkSubmit").addEventListener("click", () => act("submit"));
     }
 
@@ -260,21 +260,21 @@ function renderDetail(t) {
             // not in can_transition) — shown only at "under review".
             area.insertAdjacentHTML("beforeend", `
                 <input id="mkRevNotes" class="input" placeholder="Review notes" style="min-width:220px">
-                <button class="wallet-btn wallet-btn--sm" id="mkApprove">Approve &amp; pay</button>`);
+                <button class="wallet-btn wallet-btn--sm wallet-btn--solid" id="mkApprove">Approve &amp; pay</button>`);
             document.getElementById("mkApprove").addEventListener("click", () => act("review", "approve"));
             area.insertAdjacentHTML("beforeend", `
                 <span class="field-hint">Visible after the submission enters review (“under review”) — the engine rejects a direct Submitted→Rejected move.</span>`);
         } else if (st === "under-review") {
             area.insertAdjacentHTML("beforeend", `
                 <input id="mkRevNotes" class="input" placeholder="Review notes" style="min-width:220px">
-                <button class="wallet-btn wallet-btn--sm" id="mkApprove">Approve</button>
-                <button class="wallet-btn wallet-btn--sm" id="mkReject">Reject</button>`);
+                <button class="wallet-btn wallet-btn--sm wallet-btn--solid" id="mkApprove">Approve</button>
+                <button class="wallet-btn wallet-btn--sm wallet-btn--danger" id="mkReject">Reject</button>`);
             document.getElementById("mkApprove").addEventListener("click", () => act("review", "approve"));
             document.getElementById("mkReject").addEventListener("click", () => act("review", "reject"));
         }
         // F2: cancel is legal ONLY from Open (can_transition(*, Cancelled)).
         if (st === "open") {
-            area.insertAdjacentHTML("beforeend", `<button class="wallet-btn wallet-btn--sm" id="mkCancel">Cancel task</button>`);
+            area.insertAdjacentHTML("beforeend", `<button class="wallet-btn wallet-btn--sm wallet-btn--danger" id="mkCancel">Cancel task</button>`);
             const c = document.getElementById("mkCancel");
             if (c) c.addEventListener("click", () => act("cancel"));
         }
@@ -341,17 +341,33 @@ async function setupCreate(authed = document.body.classList.contains("is-authed"
     $("mkCreateForm").addEventListener("submit", async (e) => {
         e.preventDefault();
         const msg = $("mkCreateMsg");
+        msg.removeAttribute("role");
         msg.textContent = "";
+        const agentId = $("mkAgent").value.trim();
+        const title = $("mkTitle").value.trim();
+        const description = $("mkDesc").value.trim();
+        const criteria = $("mkCriteria").value.trim();
+        const reward = Number($("mkReward").value);
+        if (!agentId || !title || !description || !criteria) {
+            msg.setAttribute("role", "alert");
+            msg.textContent = "Agent, title, description, and acceptance criteria are required.";
+            return;
+        }
+        if (!Number.isFinite(reward) || reward <= 0) {
+            msg.setAttribute("role", "alert");
+            msg.textContent = "Reward must be greater than 0 RLO.";
+            return;
+        }
         const btn = $("mkCreateBtn");
         btn.disabled = true;
         const { ok: ok2, status, data } = await api("/api/tasks", {
             method: "POST",
             body: {
-                agent_id: $("mkAgent").value,
-                title: $("mkTitle").value.trim(),
-                description: $("mkDesc").value.trim(),
-                acceptance_criteria: $("mkCriteria").value.trim(),
-                reward_rlo: Number($("mkReward").value),
+                agent_id: agentId,
+                title,
+                description,
+                acceptance_criteria: criteria,
+                reward_rlo: reward,
             },
         });
         btn.disabled = false;
