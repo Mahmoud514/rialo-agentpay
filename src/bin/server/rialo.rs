@@ -2259,7 +2259,11 @@ fn extract_single_transfer(value: &Value) -> Option<(Option<String>, Option<Stri
             continue; // not a system transfer — irrelevant shape
         };
         let accounts = ix.get("accounts").and_then(Value::as_array)?;
-        let idx = accounts.first()?.as_u64()? as usize;
+        // System transfer account order is [source, destination]. Some
+        // RPC/CLI shapes omit the source when it is the fee payer, so pick
+        // the destination slot: the last account index. Using the first
+        // index here would report the payer as its own recipient.
+        let idx = accounts.last()?.as_u64()? as usize;
         let recipient = keys.get(idx).and_then(Value::as_str)?.to_string();
         if found.is_some() {
             return None; // ambiguous: several transfers in one tx
