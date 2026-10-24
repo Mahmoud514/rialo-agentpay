@@ -1,10 +1,10 @@
 /*
  * Rialo AgentPay — shared navbar component (navigation markup only).
  *
- * Consumed by every page: index.html (landing) plus the six app pages
- * (wallet.html, dashboard.html, agents.html, activity.html,
- * leaderboard.html, verify.html). Each page carries a minimal static
- * fallback inside [data-agentpay-nav] (brand + auth slot); this module
+ * Consumed by every page: index.html (landing) plus the seven app pages
+ * (wallet.html, dashboard.html, agents.html, marketplace.html,
+ * activity.html, leaderboard.html, verify.html). Each page carries a minimal
+ * static fallback inside [data-agentpay-nav] (brand + auth slot); this module
  * replaces it with the full navigation. No framework, no build step.
  *
  * Responsibilities (this file ONLY):
@@ -83,26 +83,26 @@ const AgentPayNav = (() => {
         const currentPath = normalizePath(location.pathname);
 
         const marketing = MARKETING_LINKS
-            .map(([id, label, realPage]) => {
+            .map(([id, label, realPage], index) => {
                 // On the landing, every marketing link is a same-page anchor.
                 // On app pages a "#anchor" would scroll the CURRENT app page
                 // and land on nothing, so the "Leaderboard" marketing link
                 // targets the real /leaderboard.html page there instead.
                 const href = isApp && realPage ? realPage : `${anchorPrefix}#${id}`;
-                return `            <a class="nav__link" href="${href}">${label}</a>`;
+                return `            <a class="nav__link" style="--i:${index}" href="${href}">${label}</a>`;
             })
             .join("\n");
 
         const appLinks = APP_LINKS
-            .map(([label, href]) => {
+            .map(([label, href], index) => {
                 const active = href === currentPath;
-                return `                <a class="btn btn--ghost btn--sm${active ? " is-active" : ""}" href="${href}"${active ? ' aria-current="page"' : ""}>${label}</a>`;
+                return `                <a class="btn btn--ghost btn--sm${active ? " is-active" : ""}" style="--i:${index}" href="${href}"${active ? ' aria-current="page"' : ""}>${label}</a>`;
             })
             .join("\n");
 
         mount.innerHTML = `
         <a class="brand" href="/">
-            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__mark brand__mark--logo" aria-hidden="true"><img src="/assets/logo-mark.png" alt=""></span>
             <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
         </a>
 
