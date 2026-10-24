@@ -214,8 +214,43 @@
     }
 
     // ------------------------------------------------------------------
-    // motion — scroll reveal + FAQ accordion (pure UI, no data)
+    // motion — scroll progress, staggered reveal, FAQ accordion (pure UI)
     // ------------------------------------------------------------------
+
+    function initScrollProgress() {
+        const bar = document.getElementById("scrollProgress");
+        if (!bar) return;
+        let raf = 0;
+        const update = () => {
+            raf = 0;
+            const doc = document.documentElement;
+            const max = doc.scrollHeight - window.innerHeight;
+            const progress = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+            bar.style.transform = `scaleX(${progress})`;
+        };
+        const schedule = () => {
+            if (!raf) raf = window.requestAnimationFrame(update);
+        };
+        window.addEventListener("scroll", schedule, { passive: true });
+        window.addEventListener("resize", schedule);
+        update();
+    }
+
+    function initRevealStagger() {
+        const groups = new Map();
+        document.querySelectorAll(".reveal").forEach((el) => {
+            const parent = el.parentElement;
+            if (!parent) return;
+            const list = groups.get(parent) || [];
+            list.push(el);
+            groups.set(parent, list);
+        });
+        groups.forEach((items) => {
+            items.forEach((el, index) => {
+                el.style.setProperty("--reveal-delay", `${Math.min(index, 6) * 65}ms`);
+            });
+        });
+    }
 
     function initReveal() {
         const items = document.querySelectorAll(".reveal");
@@ -254,7 +289,9 @@
 
     // ------------------------------------------------------------------
 
+    initRevealStagger();
     initReveal();
+    initScrollProgress();
     initFaq();
     net.start();
     initAuth();

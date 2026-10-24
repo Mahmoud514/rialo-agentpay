@@ -411,7 +411,15 @@ main { position: relative; z-index: 1; }
     background: rgba(6, 7, 6, 0.82);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
+    animation: navBarIn 560ms var(--ease) both;
 }
+
+@keyframes navBarIn {
+    from { opacity: 0; transform: translateY(-14px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.nav .brand { animation: navFadeIn 600ms var(--ease) 70ms both; }
 
 .nav__inner {
     height: var(--nav-h);
@@ -446,6 +454,22 @@ main { position: relative; z-index: 1; }
     color: var(--lime);
 }
 
+.brand__mark--logo {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    overflow: hidden;
+}
+
+.brand__mark--logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    filter: drop-shadow(0 0 10px rgba(var(--lime-rgb), .18));
+}
+
 .brand__name {
     font-family: var(--font-display);
     font-size: 13.5px;
@@ -454,6 +478,16 @@ main { position: relative; z-index: 1; }
     text-transform: uppercase;
 }
 .brand__name b { color: var(--lime); font-weight: 700; }
+.brand__name::after {
+    content: "";
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-left: 5px;
+    border-radius: 50%;
+    background: var(--lime);
+    vertical-align: 2px;
+}
 
 .nav__links {
     display: flex;
@@ -482,6 +516,25 @@ body.is-authed.app-body .nav__links {
 }
 .nav__link:hover { color: var(--text); border-color: var(--line); }
 
+.nav__links .nav__link {
+    animation: navFadeIn 480ms var(--ease) both;
+    animation-delay: calc(130ms + (var(--i, 0) * 35ms));
+}
+
+.nav__app-links .btn {
+    animation: navFadeIn 480ms var(--ease) both;
+    animation-delay: calc(110ms + (var(--i, 0) * 28ms));
+}
+
+.nav .github-login {
+    animation: navFadeIn 600ms var(--ease) 190ms both;
+}
+
+@keyframes navFadeIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
 .nav__right {
     margin-left: auto;
     display: flex;
@@ -499,24 +552,80 @@ body.is-authed.app-body .nav__links {
 
 /* auth slot rendered by auth.js (user chip when logged in) */
 .github-login:not(.github-user) {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    text-decoration: none;
-    color: #10140a;
-    background: var(--lime);
-    border: 1px solid var(--lime);
-    box-shadow: var(--glow-lime-soft);
-    padding: 10px 16px;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    transition: background var(--t-fast), transform var(--t-fast);
+    gap: 11px;
+    min-height: 46px;
+    padding: 7px 12px 7px 8px;
+    border: 1px solid var(--line-lime);
+    border-radius: var(--radius);
+    background:
+        linear-gradient(135deg, rgba(var(--lime-rgb), .13), rgba(103, 232, 249, .045) 70%),
+        var(--panel);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05), var(--glow-lime-soft);
+    color: var(--text);
+    font-family: var(--font-body);
+    text-decoration: none;
+    transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
 }
-.github-login:not(.github-user):hover { background: var(--lime-bright); transform: translateY(-1px); box-shadow: none; }
-.github-login:not(.github-user) span { color: inherit; }
+
+.github-login:not(.github-user):hover {
+    border-color: var(--lime);
+    background:
+        linear-gradient(135deg, rgba(var(--lime-rgb), .2), rgba(103, 232, 249, .07) 70%),
+        var(--panel-2);
+    transform: translateY(-1px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 10px 30px -14px rgba(var(--lime-rgb), .55);
+}
+
+.github-login__icon {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line-lime);
+    border-radius: 50%;
+    background: rgba(var(--lime-rgb), .09);
+    color: var(--lime);
+}
+
+.github-login__copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.github-login__copy strong {
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 750;
+    letter-spacing: .06em;
+    line-height: 1.1;
+    text-transform: uppercase;
+    color: var(--text);
+    white-space: nowrap;
+}
+
+.github-login__copy small {
+    font-family: var(--font-mono);
+    font-size: 8.5px;
+    letter-spacing: .1em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+.github-login__arr {
+    color: var(--lime);
+    font-size: 14px;
+    line-height: 1;
+    transition: transform var(--t-fast);
+}
+
+.github-login:not(.github-user):hover .github-login__arr { transform: translate(2px, -2px); }
 
 .github-login.github-user {
     display: inline-flex;
@@ -624,6 +733,57 @@ body.is-authed .nav__app-links { display: flex; }
     min-height: 38.14px;
     box-sizing: border-box;
     white-space: nowrap;
+}
+
+/* The landing's app row gets a little more breathing room than the compact
+   app-page tiers; app pages keep their measured responsive sizing. */
+body:not(.app-body) .nav__app-links .btn {
+    min-width: 72px;
+    min-height: 40px;
+    padding: 10px 12px;
+    font-size: 11.5px;
+    letter-spacing: 0.09em;
+}
+
+/* Signed-in HOME keeps the section anchors: they are the only way to jump
+   around the landing page, so they must not disappear with the marketing
+   row. Put them on a second navbar line and keep the app links above. */
+body.is-authed:not(.app-body) .nav {
+    height: auto;
+}
+
+body.is-authed:not(.app-body) .nav__inner {
+    height: auto;
+    min-height: var(--nav-h);
+    flex-wrap: wrap;
+    align-content: flex-start;
+    row-gap: 2px;
+    gap: 16px;
+    padding-top: 4px;
+}
+
+body.is-authed:not(.app-body) .nav__right { gap: 8px; }
+
+body.is-authed:not(.app-body) .nav__links {
+    display: flex !important;
+    order: 3;
+    flex: 1 0 100%;
+    margin: 0;
+    padding: 2px 0 5px;
+    justify-content: center;
+    border-top: 1px solid var(--line);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+body.is-authed:not(.app-body) .nav__links .nav__link {
+    padding: 5px 10px;
+}
+
+body.is-authed:not(.app-body) .nav__links::-webkit-scrollbar { display: none; }
+
+body.is-authed:not(.app-body) .section {
+    scroll-margin-top: calc(var(--nav-h) + 62px);
 }
 
 /* Active app-link self-highlight (nav.js tags the current page's link
@@ -1443,8 +1603,172 @@ body.is-authed .nav__app-links { display: flex; }
    SCROLL REVEAL
    -------------------------------------------------------------------------- */
 
-.reveal { opacity: 0; transform: translateY(18px); transition: opacity 600ms var(--ease), transform 600ms var(--ease); }
+.reveal { opacity: 0; transform: translateY(18px); transition: opacity 600ms var(--ease), transform 600ms var(--ease), transition-delay var(--reveal-delay, 0ms); }
 .reveal.is-in { opacity: 1; transform: none; }
+
+/* --------------------------------------------------------------------------
+   HOME MOTION + MARKETPLACE
+   -------------------------------------------------------------------------- */
+
+/* thin reading-progress rail at the very top of the landing page */
+.scroll-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    z-index: 100;
+    pointer-events: none;
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+    background: linear-gradient(90deg, var(--lime), var(--cyan));
+    box-shadow: 0 0 12px rgba(var(--lime-rgb), .45);
+    transition: transform 80ms linear;
+}
+
+/* slow ambient movement behind the grid; scoped away from app pages */
+body:not(.app-body) .landing-bg::after {
+    content: "";
+    position: absolute;
+    inset: -18%;
+    pointer-events: none;
+    background:
+        radial-gradient(closest-side at 72% 38%, rgba(var(--lime-rgb), .07), transparent 70%),
+        radial-gradient(closest-side at 20% 78%, rgba(103, 232, 249, .055), transparent 70%);
+    filter: blur(18px);
+    animation: bgDrift 22s ease-in-out infinite alternate;
+}
+
+@keyframes bgDrift {
+    0%   { transform: translate3d(-2.5%, -1.5%, 0) scale(1); }
+    100% { transform: translate3d(2.5%, 2%, 0) scale(1.04); }
+}
+
+.hero__eyebrow { animation: heroFade 700ms var(--ease) both; }
+
+.hero__line {
+    display: inline-block;
+    opacity: 0;
+    transform: translateY(20px);
+    animation: heroRise 850ms var(--ease) forwards;
+    animation-delay: calc(90ms + (var(--i) * 95ms));
+}
+
+.hero__lede { animation: heroFade 800ms var(--ease) 340ms both; }
+.hero .btn-row { animation: heroFade 800ms var(--ease) 430ms both; }
+.hero__meta { animation: heroFade 800ms var(--ease) 520ms both; }
+
+@keyframes heroRise {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes heroFade {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* marketplace section: four-step strip + server-enforced guard rail */
+.mk-home-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    gap: var(--s-7);
+    align-items: stretch;
+}
+
+.mk-home-flow {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-4);
+}
+
+.mk-home-step {
+    display: flex;
+    flex-direction: column;
+    min-height: 216px;
+}
+
+.mk-home-step .card__body { flex: 1; }
+
+.mk-home-step:hover { transform: translateY(-3px); }
+
+.mk-home-step__tag {
+    align-self: flex-start;
+    margin-top: var(--s-5);
+    padding: 5px 9px;
+    border: 1px solid var(--line-lime);
+    color: var(--lime);
+    background: rgba(var(--lime-rgb), .045);
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+}
+
+.mk-home-rail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+    border-color: var(--line-lime);
+    background:
+        linear-gradient(145deg, rgba(var(--lime-rgb), .035), transparent 45%),
+        var(--panel);
+}
+
+.mk-home-checks {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    color: var(--text-2);
+    font-size: 13.5px;
+    line-height: 1.55;
+}
+
+.mk-home-checks li {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+}
+
+.mk-home-checks li::before {
+    content: "✓";
+    color: var(--lime);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.7;
+}
+
+.mk-home-callout {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: auto;
+    padding: var(--s-4);
+    border: 1px solid var(--line);
+    background: var(--bg-raise);
+}
+
+.mk-home-callout strong {
+    color: var(--lime);
+    font-family: var(--font-display);
+    font-size: 15px;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+}
+
+.mk-home-callout small {
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .04em;
+    line-height: 1.5;
+}
+
+.mk-home-rail__cta { width: 100%; }
+
+.mk-home-cta { margin-top: var(--s-5); }
 
 /* --------------------------------------------------------------------------
    RESPONSIVE
@@ -1453,6 +1777,8 @@ body.is-authed .nav__app-links { display: flex; }
 @media (max-width: 1120px) {
     :root { --gutter: 28px; --section-pad: 88px; }
     .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .mk-home-grid { grid-template-columns: minmax(0, 1fr); }
+    .mk-home-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .step { border-bottom: 1px solid var(--line); min-height: 0; }
     .step:nth-child(2n) { border-right: none; }
@@ -1495,8 +1821,42 @@ body.is-authed:not(.app-body) .nav__links { display: none; }
     .nav__app-links { display: none !important; }
 }
 
+@media (min-width: 901px) and (max-width: 1450px) {
+    /* keep the wider landing nav buttons from crowding the chip at tablet/laptop */
+    body:not(.app-body) .nav__app-links .btn {
+        min-width: 66px;
+        min-height: 38px;
+        padding: 8px 8px;
+        font-size: 11px;
+    }
+}
+
 @media (max-width: 760px) {
     :root { --gutter: 20px; --nav-h: 64px; --card-pad: 22px; }
+
+    body.is-authed:not(.app-body) .nav__links {
+        justify-content: flex-start;
+        padding-left: 2px;
+    }
+
+    .github-login:not(.github-user) {
+        min-height: 40px;
+        padding: 5px 8px;
+        gap: 7px;
+    }
+
+    .github-login__icon {
+        width: 26px;
+        height: 26px;
+    }
+
+    .github-login__copy strong {
+        font-size: 10.5px;
+        letter-spacing: .04em;
+    }
+
+    .github-login__copy small { display: none; }
+    .github-login__arr { font-size: 12px; }
 
     .section { padding-top: 76px; padding-bottom: 76px; }
     .hero { padding-top: 56px; padding-bottom: 72px; }
@@ -1508,6 +1868,7 @@ body.is-authed:not(.app-body) .nav__links { display: none; }
     .github-login.github-user .connected-badge { display: none; }
 
     .grid-4, .grid-2, .net-grid { grid-template-columns: 1fr; }
+    .mk-home-flow { grid-template-columns: 1fr; }
     .steps { grid-template-columns: 1fr; }
     .step { border-right: none; }
 
@@ -1573,5 +1934,8 @@ body.is-authed:not(.app-body) .nav__links { display: none; }
         transition-duration: 0.01ms !important;
     }
     .reveal { opacity: 1; transform: none; }
+    .hero__line { opacity: 1; transform: none; animation: none; }
+    .hero__eyebrow, .hero__lede, .hero .btn-row, .hero__meta { animation: none; }
+    .nav, .nav .brand, .nav__links .nav__link, .nav__app-links .btn, .nav .github-login { animation: none; }
     .status--on .status__dot { animation: none; }
 }

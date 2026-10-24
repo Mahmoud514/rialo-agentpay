@@ -3,14 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="AgentPay — programmable payments for autonomous software agents, settled on-chain by Rialo.">
-    <title>Rialo AgentPay — Payments for Autonomous Agents</title>
-    <link rel="stylesheet" href="landing.css?v=16">
+    <meta name="description" content="AgentPay — programmable payments and a two-sided task marketplace for autonomous software, settled on-chain by Rialo.">
+    <meta property="og:title" content="Rialo AgentPay — Payments &amp; Work Marketplace for Agents">
+    <meta property="og:image" content="https://rialo-agentpay.blitz.cloud/assets/logo-lockup.png">
+    <meta name="theme-color" content="#060706">
+    <title>Rialo AgentPay — Payments &amp; Work Marketplace for Agents</title>
+    <link rel="icon" type="image/png" href="/assets/logo-mark.png">
+    <link rel="stylesheet" href="landing.css?v=21">
 </head>
 
 <body>
 
 <div class="landing-bg" aria-hidden="true"></div>
+<div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
 
 <!-- ================= NAV (shared component — nav.js; static fallback keeps
      brand + auth slot before JS renders the full navigation) ================= -->
@@ -18,7 +23,7 @@
 <nav class="nav" aria-label="Primary">
     <div class="container nav__inner" data-agentpay-nav>
         <a class="brand" href="/">
-            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__mark brand__mark--logo" aria-hidden="true"><img src="/assets/logo-mark.png" alt=""></span>
             <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
         </a>
         <div class="nav__right">
@@ -36,23 +41,27 @@
 
         <div>
             <p class="eyebrow hero__eyebrow">
-                Rialo&nbsp;· Agent Payments Layer&nbsp;· Testnet
+                Rialo&nbsp;· Agent Payments&nbsp;+&nbsp;Task Marketplace&nbsp;· Testnet
             </p>
 
             <h1 class="hero__title">
-                Payments<br>
-                <span class="nb">for Autonomous</span><br>
-                Agents.
+                <span class="hero__line" style="--i:0">Payments</span><br>
+                <span class="hero__line" style="--i:1"><span class="nb">for Autonomous</span></span><br>
+                <span class="hero__line" style="--i:2">Agents.</span>
             </h1>
 
             <p class="hero__lede">
-                Give autonomous software a wallet, define how it can pay,
-                and let Rialo settle the transaction on-chain.
+                Give autonomous software a wallet, define how it can pay, and let Rialo
+                settle the transaction on-chain. Post work in the task marketplace, review
+                the evidence, then pay — or reject without moving a single token.
             </p>
 
             <div class="btn-row">
                 <a class="btn btn--primary" id="launchApp" href="/auth/github">
                     Launch&nbsp;App <span class="arr">→</span>
+                </a>
+                <a class="btn btn--ghost" href="/marketplace" id="exploreMarketplace">
+                    Explore&nbsp;Marketplace <span class="arr">→</span>
                 </a>
                 <a class="btn btn--ghost" href="#architecture">
                     Read&nbsp;Docs <span class="arr">→</span>
@@ -249,18 +258,94 @@
     </div>
 </section>
 
-<!-- ================= 03 — ARCHITECTURE ================= -->
+<!-- ================= 03 — TASK MARKETPLACE ================= -->
+
+<section class="section" id="marketplace">
+    <div class="container">
+
+        <div class="sec-head reveal">
+            <p class="eyebrow"><span class="num">03</span>&nbsp;·&nbsp;Task&nbsp;Marketplace</p>
+            <h2 class="sec-title">Work gets done.<br><span class="dim">Payment follows proof.</span></h2>
+            <p class="sec-lede">
+                The marketplace closes the loop between a human who needs work and a
+                worker who can do it. The owner posts a reward, the worker claims and
+                submits evidence, and the owner releases payment on-chain only after
+                reviewing it. Reject the work and no payment is made.
+            </p>
+        </div>
+
+        <div class="mk-home-grid">
+            <div class="mk-home-flow">
+                <article class="card card--tick mk-home-step reveal">
+                    <div class="card__idx"><span>01</span><span class="badge">Owner</span></div>
+                    <h3 class="card__title">Post a task</h3>
+                    <p class="card__body">Set the brief, the acceptance criteria, the reward in RLO, and the agent that will pay on approval.</p>
+                    <span class="mk-home-step__tag">reward reserved</span>
+                </article>
+                <article class="card card--tick mk-home-step reveal">
+                    <div class="card__idx"><span>02</span><span class="badge">Worker</span></div>
+                    <h3 class="card__title">Claim the work</h3>
+                    <p class="card__body">A different account claims the open task and chooses the Rialo payout address the owner will see before approving.</p>
+                    <span class="mk-home-step__tag">one worker at a time</span>
+                </article>
+                <article class="card card--tick mk-home-step reveal">
+                    <div class="card__idx"><span>03</span><span class="badge">Evidence</span></div>
+                    <h3 class="card__title">Submit proof</h3>
+                    <p class="card__body">Add notes and attach deliverables — text, PDF, images, archives, or any other browser-readable file type. Only the two parties can read them.</p>
+                    <span class="mk-home-step__tag">text&nbsp;+&nbsp;any file</span>
+                </article>
+                <article class="card card--tick mk-home-step reveal">
+                    <div class="card__idx"><span>04</span><span class="badge">Owner</span></div>
+                    <h3 class="card__title">Approve or reject</h3>
+                    <p class="card__body">Approve to release the reward on-chain and return the transaction signature. Reject to close the task with no transfer and no payout.</p>
+                    <span class="mk-home-step__tag">payment follows approval</span>
+                </article>
+            </div>
+
+            <aside class="card mk-home-rail reveal" aria-label="Marketplace safety rules">
+                <div class="flowpanel__head">
+                    <span class="label">Role&nbsp;gates</span>
+                    <span class="badge badge--lime">Server-enforced</span>
+                </div>
+                <ul class="mk-home-checks">
+                    <li>An owner cannot claim, submit, or review their own task as the worker.</li>
+                    <li>A worker cannot approve or reject — payout authority belongs to the owner.</li>
+                    <li>No payment is sent before the owner approves the submitted evidence.</li>
+                    <li>The public board hides terminal tasks; task detail is limited to the two parties.</li>
+                    <li>In-page toasts tell the owner when work is submitted and the worker when it is paid or rejected.</li>
+                    <li>The owner sees the worker's payout address before pressing approve.</li>
+                </ul>
+                <div class="mk-home-callout">
+                    <span class="label">Evidence, not promises</span>
+                    <strong>Approve &amp; Pay</strong>
+                    <small>On-chain payout · real signature · verifiable later</small>
+                </div>
+                <a class="btn btn--primary btn--sm mk-home-rail__cta" href="/marketplace">
+                    Open&nbsp;Marketplace <span class="arr">→</span>
+                </a>
+            </aside>
+        </div>
+
+        <div class="btn-row mk-home-cta reveal">
+            <a class="btn btn--ghost" href="/marketplace">See open tasks <span class="arr">→</span></a>
+            <a class="btn btn--ghost" href="/verify">Verify a payment <span class="arr">→</span></a>
+        </div>
+
+    </div>
+</section>
+
+<!-- ================= 04 — ARCHITECTURE ================= -->
 
 <section class="section" id="architecture">
     <div class="container">
 
         <div class="sec-head reveal">
-            <p class="eyebrow"><span class="num">03</span>&nbsp;·&nbsp;Architecture</p>
+            <p class="eyebrow"><span class="num">04</span>&nbsp;·&nbsp;Architecture</p>
             <h2 class="sec-title">Identity in.<br><span class="dim">Signature out.</span></h2>
             <p class="sec-lede">
                 Everything on this page is pinned to the system as it ships today: the
-                real flow from GitHub identity to on-chain settlement, every route the
-                server registers, and every page it actually serves. No placeholders,
+                real flow from GitHub identity to on-chain settlement, the core route
+                groups behind each page, and every page it actually serves. No placeholders,
                 no simulated data.
             </p>
         </div>
@@ -339,7 +424,7 @@
                 <div class="kv-wrap">
                 <table class="kv">
                     <caption>
-                        <span class="label">Route&nbsp;map&nbsp;—&nbsp;every&nbsp;route&nbsp;the&nbsp;server&nbsp;registers</span>
+                        <span class="label">Core&nbsp;route&nbsp;map&nbsp;—&nbsp;the groups behind every&nbsp;page</span>
                     </caption>
                     <tbody>
                         <tr>
@@ -353,6 +438,10 @@
                         <tr>
                             <th>POST</th>
                             <td><span class="value-mono">/auth/logout</span><br><span class="card__body">Clear session + cookie.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/auth/wallet-recover</span><br><span class="card__body">Explicit recovery for a missing-key wallet with zero balance; never a silent replacement.</span></td>
                         </tr>
                         <tr>
                             <th>GET</th>
@@ -380,11 +469,11 @@
                         </tr>
                         <tr>
                             <th>GET·POST</th>
-                            <td><span class="value-mono">/api/agents</span><br><span class="card__body">List own agents / create a draft agent with its own independent wallet.</span></td>
+                            <td><span class="value-mono">/api/agents</span><br><span class="card__body">List own agents / create a draft agent with its own isolated signing identity.</span></td>
                         </tr>
                         <tr>
-                            <th>GET·PATCH</th>
-                            <td><span class="value-mono">/api/agents/{id}</span><br><span class="card__body">Read one own agent / rename. Missing and foreign both answer not-found.</span></td>
+                            <th>GET·PATCH·DELETE</th>
+                            <td><span class="value-mono">/api/agents/{id}</span><br><span class="card__body">Read one own agent, rename, or delete a draft. Missing and foreign both answer not-found.</span></td>
                         </tr>
                         <tr>
                             <th>GET</th>
@@ -400,7 +489,23 @@
                         </tr>
                         <tr>
                             <th>POST</th>
-                            <td><span class="value-mono">/api/agents/{id}/payments</span><br><span class="card__body">Explicit payment from the agent's OWN wallet, full gate chain.</span></td>
+                            <td><span class="value-mono">/api/agents/{id}/payments</span><br><span class="card__body">Explicit payment from the agent's isolated signing identity, full gate chain.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/api/tasks</span><br><span class="card__body">Create a task with its reward, acceptance criteria, and paying agent. <span class="value-mono">GET /api/tasks/open</span> is the public board.</span></td>
+                        </tr>
+                        <tr>
+                            <th>GET</th>
+                            <td><span class="value-mono">/api/tasks/{id}</span><br><span class="card__body">Task detail for the owner or the assigned worker; anonymous access is not found.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/api/tasks/{id}/claim</span> · <span class="value-mono">/submit</span> · <span class="value-mono">/review</span> · <span class="value-mono">/cancel</span><br><span class="card__body">Role-gated lifecycle: claim with a payout address, submit notes + any file type, approve/reject as owner, cancel when allowed.</span></td>
+                        </tr>
+                        <tr>
+                            <th>POST</th>
+                            <td><span class="value-mono">/api/tasks/{id}/payout/reconcile</span><br><span class="card__body">Read-only recovery of a committed payout verdict; never transfers twice.</span></td>
                         </tr>
                         <tr>
                             <th>POST</th>
@@ -549,27 +654,41 @@
                     </div>
                 </article>
 
+                <article class="card card--tick arch-page-card">
+                    <div class="card__idx"><span>07</span></div>
+                    <h3 class="card__title">Marketplace</h3>
+                    <p class="card__body">
+                        The two-sided task board: post a rewarded task, claim it as a
+                        different account, submit notes and file evidence, then approve
+                        and pay on-chain — or reject with no payment.
+                    </p>
+                    <div class="card__foot">
+                        <span class="value-mono">/marketplace</span>
+                        <span class="status status--on"><span class="status__dot" aria-hidden="true"></span><span class="status__label">Live</span></span>
+                    </div>
+                </article>
+
             </div>
 
             <p class="card__body" style="margin-top:16px; font-size:12.5px;">
                 <span class="badge badge--cyan">Honest&nbsp;state</span>
-                &nbsp;Every route above is registered in the server today and every page
-                above is shipped in this frontend. Human owner payments use file-based
-                storage; Agent payments use hardened signer with policy-verified IR.
-                The server never transmits or logs key material.
+                &nbsp;Every page above is shipped in this frontend, and the route groups
+                above are registered in the server today. Task, agent, policy, and
+                activity records are read from the production Postgres store; wallet keys
+                remain server-side and are never sent to the browser.
             </p>
         </div>
 
     </div>
 </section>
 
-<!-- ================= 04 — LIVE NETWORK ================= -->
+<!-- ================= 05 — LIVE NETWORK ================= -->
 
 <section class="section" id="network">
     <div class="container">
 
         <div class="sec-head reveal">
-            <p class="eyebrow"><span class="num">04</span>&nbsp;·&nbsp;Live&nbsp;Network</p>
+            <p class="eyebrow"><span class="num">05</span>&nbsp;·&nbsp;Live&nbsp;Network</p>
             <h2 class="sec-title">Real state —<br><span class="dim">or nothing at all.</span></h2>
             <p class="sec-lede">
                 Every value below is fetched from the AgentPay backend and its Rialo RPC
@@ -610,13 +729,13 @@
     </div>
 </section>
 
-<!-- ================= 05 — LEADERBOARD ================= -->
+<!-- ================= 06 — LEADERBOARD ================= -->
 
 <section class="section" id="leaderboard">
     <div class="container">
 
         <div class="sec-head reveal">
-            <p class="eyebrow"><span class="num">05</span>&nbsp;·&nbsp;Leaderboard</p>
+            <p class="eyebrow"><span class="num">06</span>&nbsp;·&nbsp;Leaderboard</p>
             <h2 class="sec-title">Your agents<br><span class="dim">by verified activity.</span></h2>
         </div>
 
@@ -642,13 +761,13 @@
     </div>
 </section>
 
-<!-- ================= 06 — RECENT ACTIVITY ================= -->
+<!-- ================= 07 — RECENT ACTIVITY ================= -->
 
 <section class="section" id="activity">
     <div class="container">
 
         <div class="sec-head reveal">
-            <p class="eyebrow"><span class="num">06</span>&nbsp;·&nbsp;Recent&nbsp;Activity</p>
+            <p class="eyebrow"><span class="num">07</span>&nbsp;·&nbsp;Recent&nbsp;Activity</p>
             <h2 class="sec-title">Settlements,<br><span class="dim">as they land.</span></h2>
         </div>
 
@@ -688,13 +807,13 @@
     </div>
 </section>
 
-<!-- ================= 07 — WHY RIALO ================= -->
+<!-- ================= 08 — WHY RIALO ================= -->
 
 <section class="section" id="why">
     <div class="container">
 
         <div class="sec-head reveal">
-            <p class="eyebrow"><span class="num">07</span>&nbsp;·&nbsp;Why&nbsp;Rialo</p>
+            <p class="eyebrow"><span class="num">08</span>&nbsp;·&nbsp;Why&nbsp;Rialo</p>
             <h2 class="sec-title">A settlement layer<br><span class="dim">machines can use.</span></h2>            <p class="sec-lede">
                 Not a claim of superiority — a description of the properties AgentPay
                 actually relies on today.
@@ -743,13 +862,13 @@
     </div>
 </section>
 
-<!-- ================= 08 — USE CASES ================= -->
+<!-- ================= 09 — USE CASES ================= -->
 
 <section class="section" id="usecases">
     <div class="container">
 
         <div class="sec-head reveal">
-            <p class="eyebrow"><span class="num">08</span>&nbsp;·&nbsp;Use&nbsp;Cases</p>
+            <p class="eyebrow"><span class="num">09</span>&nbsp;·&nbsp;Use&nbsp;Cases</p>
             <h2 class="sec-title">What agents<br><span class="dim">will pay for.</span></h2>
             <p class="sec-lede">
                 Product directions AgentPay is designed for. These are intended use cases,
@@ -803,13 +922,13 @@
     </div>
 </section>
 
-<!-- ================= 09 — FAQ ================= -->
+<!-- ================= 10 — FAQ ================= -->
 
 <section class="section" id="faq">
     <div class="container">
 
         <div class="sec-head reveal">
-            <p class="eyebrow"><span class="num">09</span>&nbsp;·&nbsp;FAQ</p>
+            <p class="eyebrow"><span class="num">10</span>&nbsp;·&nbsp;FAQ</p>
             <h2 class="sec-title">What is real,<br><span class="dim">what is next.</span></h2>
         </div>
 
@@ -822,11 +941,13 @@
                     <span class="faq__icon" aria-hidden="true"></span>
                 </button>
                 <div class="faq__a"><div class="faq__a-inner">
-                    AgentPay is a payment layer for autonomous software. A human identity
-                    (verified by GitHub) gets a persistent Rialo wallet; agents
-                    created under that account each receive an isolated signing identity,
-                    and can initiate payments through AgentPay's API that
-                    settle on-chain. Today it runs on Rialo Testnet.
+                    AgentPay is a payment layer for autonomous software, with a two-sided
+                    task marketplace on top. A human identity (verified by GitHub) gets a
+                    persistent Rialo wallet; agents created under that account each receive
+                    an isolated signing identity, and can initiate payments through
+                    AgentPay's API that settle on-chain. In the marketplace, an owner posts
+                    a rewarded task, a worker submits evidence, and the owner approves the
+                    payout — or rejects it with no transfer. Today it runs on Rialo Testnet.
                 </div></div>
             </div>
 
@@ -910,8 +1031,11 @@
                     credential-initiated), each agent's isolated signing identity,
                     reconciliation, per-agent activity and owner statistics, the
                     owner-scoped leaderboard, public verification with per-agent proof
-                    listings, and read-only health/program probes. The Live Network
-                    section on this page reports those states from real endpoints.
+                    listings, read-only health/program probes, and the live task
+                    marketplace — claim, submission with notes and any file type, owner
+                    review, approve-and-pay, reject-without-payment, and in-page outcome
+                    notifications for the worker. The Live Network section on this page
+                    reports those states from real endpoints.
                 </div></div>
             </div>
 
@@ -926,12 +1050,14 @@
                     disabled behind the explicit operator safety cap); credential issuance
                     remains an operator act through the store module (authentication,
                     rotation, and revocation are enabled over the thresholded ops
-                    endpoint). A global public transaction feed is intentionally not
-                    implemented. The Leaderboard and Recent Activity sections on this page
-                    keep their honest empty states: the owner-scoped leaderboard and
-                    per-agent activity are live at /leaderboard.html and /activity.html,
-                    but a shared public feed does not exist — no placeholder agents,
-                    no sample transactions.
+                    endpoint). Notifications are in-page only — there is no email, push,
+                    or after-page-close delivery, and no global public transaction feed.
+                    A missing wallet key is recovered only through the explicit
+                    zero-balance recovery path; a funded wallet is never silently replaced.
+                    The Leaderboard and Recent Activity sections on this page keep their
+                    honest empty states: the owner-scoped leaderboard and per-agent activity
+                    are live at /leaderboard.html and /activity.html, but a shared public
+                    feed does not exist — no placeholder agents, no sample transactions.
                 </div></div>
             </div>
 
@@ -940,12 +1066,12 @@
     </div>
 </section>
 
-<!-- ================= 10 — FINAL CTA ================= -->
+<!-- ================= 11 — FINAL CTA ================= -->
 
 <section class="finale">
     <div class="container finale__grid">
         <div class="finale__inner">
-            <p class="eyebrow reveal"><span class="num">10</span>&nbsp;·&nbsp;Start</p>
+            <p class="eyebrow reveal"><span class="num">11</span>&nbsp;·&nbsp;Start</p>
             <h2 class="finale__title reveal">
                 Give your agents<br>
                 <span class="dim">an economic layer.</span>
@@ -976,6 +1102,7 @@
                 <li><span class="finale__check">✓</span><div><strong>Testnet faucet</strong><small>POST /api/faucet · 1 RLO</small></div></li>
                 <li><span class="finale__check">✓</span><div><strong>Direct on-chain payment</strong><small>POST /api/payment · signature returned</small></div></li>
                 <li><span class="finale__check">✓</span><div><strong>Agent wallets &amp; policy layer</strong><small>per-agent isolated signing identity · deny-by-default limits enforced on every payment</small></div></li>
+                <li><span class="finale__check">✓</span><div><strong>Task marketplace</strong><small>post · claim · submit notes + any file type · approve &amp; pay on-chain, or reject with no payment</small></div></li>
                 <li><span class="finale__check">✓</span><div><strong>Public verification</strong><small>GET /api/public/verify · /api/public/agents/{id}/proofs</small></div></li>
                 <li><span class="finale__check">✓</span><div><strong>Read-only network probes</strong><small>GET /api/health · /api/program/status</small></div></li>
                 <li class="is-pending"><span class="finale__check">·</span><div><strong>Program-mediated payments</strong><small>built &amp; deployed — disabled behind operator safety cap</small></div></li>
@@ -992,20 +1119,20 @@
 <footer class="footer">
     <div class="container footer__inner">
         <a class="brand" href="/">
-            <span class="brand__mark" aria-hidden="true">R</span>
+            <span class="brand__mark brand__mark--logo" aria-hidden="true"><img src="/assets/logo-mark.png" alt=""></span>
             <span class="brand__name">Rialo&nbsp;<b>AgentPay</b></span>
         </a>
         <div class="footer__meta">
-            <span>Payments&nbsp;for&nbsp;Autonomous&nbsp;Agents</span>
+            <span>Payments&nbsp;&amp;&nbsp;Work Marketplace&nbsp;for&nbsp;Agents</span>
             <span>Rialo&nbsp;Testnet</span>
             <span>Real&nbsp;data&nbsp;only&nbsp;—&nbsp;or&nbsp;none</span>
         </div>
     </div>
 </footer>
 
-<script src="nav.js?v=6"></script>
-<script src="auth.js?v=5"></script>
-<script src="landing.js?v=3"></script>
+<script src="nav.js?v=9"></script>
+<script src="auth.js?v=6"></script>
+<script src="landing.js?v=4"></script>
 
 </body>
 </html>
