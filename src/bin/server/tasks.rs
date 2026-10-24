@@ -3320,8 +3320,9 @@ fn test_recovery_repairs_orphaned_active_reservation_on_terminal_task() {
 fn test_approval_from_submitted_reaches_bridge_and_refuses_repeat() {
     // First approval: Submitted -> PaymentPending (the Phase-4 edge).
     assert!(TaskStatus::Submitted.can_transition(TaskStatus::PaymentPending));
-    // Reject/RequestRevision remain UnderReview-gated (unchanged).
-    assert!(!TaskStatus::Submitted.can_transition(TaskStatus::Rejected));
+    // Owner review: reject is allowed directly from Submitted; revision
+    // requests remain UnderReview-gated.
+    assert!(TaskStatus::Submitted.can_transition(TaskStatus::Rejected));
     assert!(!TaskStatus::Submitted.can_transition(TaskStatus::RevisionRequested));
     // Duplicate approval: PaymentPending can never re-enter PaymentPending.
     assert!(!TaskStatus::PaymentPending.can_transition(TaskStatus::PaymentPending));
