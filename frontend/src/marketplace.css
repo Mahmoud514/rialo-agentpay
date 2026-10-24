@@ -319,6 +319,241 @@
 }
 
 /* --------------------------------------------------------------------------
+   WORK SUBMISSION + EVIDENCE
+   -------------------------------------------------------------------------- */
+.mk-submit-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    width: 100%;
+}
+
+.mk-sub-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    min-width: 0;
+}
+
+.mk-sub-field .label {
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    line-height: 1.4;
+    text-transform: uppercase;
+}
+
+.mk-sub-field .input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.mk-sub-field textarea.input {
+    min-height: 72px;
+    resize: vertical;
+}
+
+.mk-optional {
+    color: var(--text-3);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    text-transform: none;
+}
+
+.mk-file-input {
+    padding: 9px 10px;
+    font-size: 11px;
+}
+
+.mk-file-input::file-selector-button {
+    margin-right: var(--s-3);
+    padding: 5px 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+    color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.mk-file-input::file-selector-button:hover {
+    border-color: var(--line-lime);
+    color: var(--text);
+}
+
+.mk-sub-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+}
+
+.mk-file-preview {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    max-width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg-raise);
+}
+
+.mk-file-preview img {
+    width: 42px;
+    height: 42px;
+    flex: none;
+    object-fit: cover;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+}
+
+.mk-file-preview__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    max-width: 240px;
+}
+
+.mk-file-preview__meta strong {
+    overflow: hidden;
+    color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mk-file-preview__meta small {
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 9px;
+}
+
+.mk-file-icon,
+.mk-attachment__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    flex: none;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 8px;
+    letter-spacing: 0.04em;
+}
+
+.mk-file-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex: none;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-3);
+    cursor: pointer;
+}
+
+.mk-file-remove:hover {
+    border-color: rgba(248, 113, 113, 0.6);
+    color: var(--red);
+}
+
+.mk-submission {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-4);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: rgba(var(--lime-rgb), 0.025);
+}
+
+.mk-submission__notes {
+    margin: 0;
+    color: var(--text-2);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.mk-attachments {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: var(--s-2);
+}
+
+.mk-attachment {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg-raise);
+    text-align: left;
+    cursor: pointer;
+}
+
+.mk-attachment:hover {
+    border-color: var(--line-lime);
+}
+
+.mk-attachment__thumb {
+    width: 48px;
+    height: 48px;
+    flex: none;
+    object-fit: cover;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.mk-attachment__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.mk-attachment__meta strong {
+    overflow: hidden;
+    color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mk-attachment__meta small {
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 9px;
+}
+
+.mk-attachment__download {
+    flex: none;
+    color: var(--lime);
+    font-size: 14px;
+}
+
+/* --------------------------------------------------------------------------
    RESPONSIVE — one-column form and action lane on narrow screens.
    -------------------------------------------------------------------------- */
 @media (max-width: 760px) {

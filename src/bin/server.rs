@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, Query, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, patch, post},
@@ -642,7 +642,10 @@ async fn main() {
         .route("/api/tasks/{id}", get(tasks::get_task))
         .route("/api/tasks/{id}/cancel", post(tasks::cancel_task))
         .route("/api/tasks/{id}/claim", post(tasks::claim_task))
-        .route("/api/tasks/{id}/submit", post(tasks::submit_task))
+        .route(
+            "/api/tasks/{id}/submit",
+            post(tasks::submit_task).layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
+        )
         .route("/api/tasks/{id}/review", post(tasks::review_task))
         // PHASE 2 — task-payout recovery: owner-authenticated recovery of
         // PaymentPending payouts from the AUTHORITATIVE payment intent.

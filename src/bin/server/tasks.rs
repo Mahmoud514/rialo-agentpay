@@ -63,6 +63,7 @@ impl TaskStatus {
                 | (Self::Open, Self::InProgress)
                 | (Self::InProgress, Self::Submitted)
                 | (Self::Submitted, Self::UnderReview)
+                | (Self::Submitted, Self::Rejected)
                 | (Self::UnderReview, Self::Approved)
                 | (Self::UnderReview, Self::Rejected)
                 | (Self::UnderReview, Self::RevisionRequested)
@@ -98,6 +99,28 @@ impl TaskStatus {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum SubmissionFile {
+    /// Backward-compatible form: an old stored data URL.
+    Legacy(String),
+    /// Structured attachment with its original filename and declared MIME.
+    File {
+        name: String,
+        content_type: String,
+        data_url: String,
+    },
+}
+
+impl SubmissionFile {
+    fn data_url(&self) -> &str {
+        match self {
+            Self::Legacy(data_url) => data_url,
+            Self::File { data_url, .. } => data_url,
+        }
+    }
+}
+
 /// Task record
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Task {
@@ -117,7 +140,7 @@ pub struct Task {
     pub reward_rlo: f64,
     pub submission_url: Option<String>,
     pub submission_notes: Option<String>,
-    pub submission_files: Vec<String>,
+    pub submission_files: Vec<SubmissionFile>,
     pub review_notes: Option<String>,
     pub revision_count: u32,
     pub payment_intent_id: Option<String>,
@@ -169,6 +192,8 @@ pub struct ClaimTaskRequest {
 pub struct SubmitTaskRequest {
     pub url: String,
     pub notes: String,
+    #[serde(default)]
+    pub submission_files: Vec<SubmissionFile>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -183,6 +208,76 @@ pub enum ReviewAction {
     Approve,
     Reject,
     RequestRevision,
+}
+
+/// Submission attachments are self-contained data URLs (any file type the
+/// browser can read), stored in the task record so the owner's evidence
+/// survives a restart in PG mode. The caps bound both a single request and
+/// the stored row; attachment data is never rendered inline as HTML/SVG.
+const MAX_SUBMISSION_FILES: usize = 5;
+const MAX_SUBMISSION_FILE_DATA_URL_LEN: usize = 2_800_000;
+const MAX_SUBMISSION_FILES_TOTAL_LEN: usize = 9_000_000;
+
+fn validate_submission_files(files: &[SubmissionFile]) -> Result<(), String> {
+    if files.len() > MAX_SUBMISSION_FILES {
+        return Err(format!(
+            "At most {} files may be attached",
+            MAX_SUBMISSION_FILES
+        ));
+    }
+    let mut total = 0usize;
+    for file in files {
+        let (name, declared_type, data_url) = match file {
+            SubmissionFile::Legacy(url) => ("attachment", "", url.as_str()),
+            SubmissionFile::File {
+                name,
+                content_type,
+                data_url,
+            } => (name.trim(), content_type.trim(), data_url.as_str()),
+        };
+        if name.is_empty()
+            || name.len() > 120
+            || name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\'))
+        {
+            return Err("Attachment names must be 1–120 characters without path separators".to_string());
+        }
+        if data_url.len() > MAX_SUBMISSION_FILE_DATA_URL_LEN {
+            return Err("An attached file is too large".to_string());
+        }
+        total = total.saturating_add(data_url.len());
+        if total > MAX_SUBMISSION_FILES_TOTAL_LEN {
+            return Err("Attached files are too large in total".to_string());
+        }
+        let rest = data_url
+            .strip_prefix("data:")
+            .ok_or_else(|| "Attachments must be data URLs".to_string())?;
+        let (meta, payload) = rest
+            .split_once(',')
+            .ok_or_else(|| "Attachment data URL is missing its payload".to_string())?;
+        let meta = meta
+            .strip_suffix(";base64")
+            .ok_or_else(|| "Attachments must be base64 data URLs".to_string())?;
+        let mime = meta.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        if mime.is_empty()
+            || !mime
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'+' | b'.' | b'-'))
+        {
+            return Err("Attachment MIME type is invalid".to_string());
+        }
+        if !declared_type.is_empty() && declared_type.to_ascii_lowercase() != mime {
+            return Err("Attachment MIME type does not match its data URL".to_string());
+        }
+        if payload.is_empty()
+            || payload.len() % 4 != 0
+            || !payload
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+        {
+            return Err("An attached file is not valid base64".to_string());
+        }
+    }
+    Ok(())
 }
 
 // Storage paths
@@ -1433,13 +1528,32 @@ pub async fn submit_task(
         );
     }
 
-    if req.url.trim().is_empty() {
-        return api_error(StatusCode::BAD_REQUEST, "EMPTY_URL", "A URL is required");
+    if req.url.trim().is_empty()
+        && req.notes.trim().is_empty()
+        && req.submission_files.is_empty()
+    {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "EMPTY_SUBMISSION",
+            "A URL, note, or image is required",
+        );
+    }
+    if let Err(reason) = validate_submission_files(&req.submission_files) {
+        return api_error(StatusCode::BAD_REQUEST, "INVALID_ATTACHMENT", &reason);
     }
 
     task.status = TaskStatus::Submitted;
-    task.submission_url = Some(req.url.trim().to_string());
-    task.submission_notes = Some(req.notes.trim().to_string());
+    task.submission_url = if req.url.trim().is_empty() {
+        None
+    } else {
+        Some(req.url.trim().to_string())
+    };
+    task.submission_notes = if req.notes.trim().is_empty() {
+        None
+    } else {
+        Some(req.notes.trim().to_string())
+    };
+    task.submission_files = req.submission_files;
     task.updated_at = now_unix();
 
     if let Err(e) = write_json_atomic(&task_path(&task_id), &task) {
@@ -1500,6 +1614,8 @@ pub async fn review_task(
             "Invalid state transition",
         );
     }
+
+    let mut payment_policy_override: Option<AgentPolicy> = None;
 
     match req.action {
         ReviewAction::Approve => {
@@ -1571,18 +1687,20 @@ pub async fn review_task(
                 }
             };
 
-            // Verify worker recipient is authorized in the effective policy
-            if !policy
+            // The task owner is approving this exact task and this exact
+            // worker recipient. Add the recipient to the IN-MEMORY effective
+            // policy for this one payout (the persisted agent policy is not
+            // mutated). Max-per-tx, daily limits, allowed actions, and the
+            // hierarchy walk still run inside the payment engine.
+            let mut task_policy = policy;
+            if !task_policy
                 .allowed_recipients
                 .iter()
                 .any(|r| r == worker_recipient)
             {
-                return api_error(
-                    StatusCode::FORBIDDEN,
-                    "RECIPIENT_NOT_AUTHORIZED",
-                    "Worker recipient is not in the agent's allowed recipients list",
-                );
+                task_policy.allowed_recipients.push(worker_recipient.clone());
             }
+            payment_policy_override = Some(task_policy);
 
             // STAGE 1: Keep reservation active during PaymentPending
             // Reservation is NOT released here - it stays active until
@@ -1628,7 +1746,14 @@ pub async fn review_task(
     drop(_guard);
     if task.status == TaskStatus::PaymentPending {
         let notes = task.review_notes.clone().unwrap_or_default();
-        return match execute_task_payment(task, &task_id, &notes).await {
+        return match execute_task_payment_with_policy(
+            task,
+            &task_id,
+            &notes,
+            payment_policy_override,
+        )
+        .await
+        {
             Ok(value) => Json(serde_json::json!({
                 "task_id": task_id,
                 "status": "paid",
@@ -1817,6 +1942,15 @@ async fn execute_task_payment(
     task_id: &str,
     review_notes: &str,
 ) -> Result<serde_json::Value, PaymentExecResult> {
+    execute_task_payment_with_policy(task, task_id, review_notes, None).await
+}
+
+async fn execute_task_payment_with_policy(
+    task: Task,
+    task_id: &str,
+    review_notes: &str,
+    policy_override: Option<AgentPolicy>,
+) -> Result<serde_json::Value, PaymentExecResult> {
     use crate::agents::{
         agent_auth_keys_dir, agent_wallet_dir, intents_root, parse_agent_id, spend_dir,
     };
@@ -1863,65 +1997,71 @@ async fn execute_task_payment(
 
     // 3. The effective policy (the SAME resolution the payment path uses:
     //    storage-mode dispatched leaf read; the frozen hierarchy walk).
-    let policy_result: Result<Option<crate::agents::AgentPolicy>, std::io::Error> =
-        if crate::pg_store::pg_is_authoritative() {
-            // F8: blocking-pool dispatch (block_on panics in async context).
-            match tokio::task::spawn_blocking(move || {
-                crate::pg_store::pg_run(async {
-                    let client = crate::pg_store::global_client().await;
-                    crate::pg_store::policy_read_pg(&*client, policy_uuid).await
+    //    A task approval may pass an in-memory override whose allow-list
+    //    includes the explicitly approved worker recipient.
+    let policy = if let Some(p) = policy_override {
+        p
+    } else {
+        let policy_result: Result<Option<crate::agents::AgentPolicy>, std::io::Error> =
+            if crate::pg_store::pg_is_authoritative() {
+                // F8: blocking-pool dispatch (block_on panics in async context).
+                match tokio::task::spawn_blocking(move || {
+                    crate::pg_store::pg_run(async {
+                        let client = crate::pg_store::global_client().await;
+                        crate::pg_store::policy_read_pg(&*client, policy_uuid).await
+                    })
                 })
-            })
-            .await
-            {
-                Ok(Ok(Ok(p))) => Ok(p),
-                Ok(Ok(Err(e))) => Err(std::io::Error::other(format!("pg policy read: {e}"))),
-                Ok(Err(e)) => Err(std::io::Error::other(format!("pg runtime: {e:?}"))),
-                Err(_) => Err(std::io::Error::other("pg policy read worker panicked")),
-            }
-        } else {
-            crate::agents::load_policy_for_agent(&policy_uuid)
-        };
-    let policy = match policy_result {
-        Ok(Some(p)) => match crate::agents::resolve_effective_policy_for_agent(p, &policy_uuid) {
-            Ok(ep) => ep,
-            Err(_) => {
+                .await
+                {
+                    Ok(Ok(Ok(p))) => Ok(p),
+                    Ok(Ok(Err(e))) => Err(std::io::Error::other(format!("pg policy read: {e}"))),
+                    Ok(Err(e)) => Err(std::io::Error::other(format!("pg runtime: {e:?}"))),
+                    Err(_) => Err(std::io::Error::other("pg policy read worker panicked")),
+                }
+            } else {
+                crate::agents::load_policy_for_agent(&policy_uuid)
+            };
+        match policy_result {
+            Ok(Some(p)) => match crate::agents::resolve_effective_policy_for_agent(p, &policy_uuid) {
+                Ok(ep) => ep,
+                Err(_) => {
+                    task.status = TaskStatus::PaymentFailed;
+                    task.payment_error = Some("Policy hierarchy invalid".to_string());
+                    let _ = write_json_atomic(&task_path(task_id), &task);
+                    // RESERVATION-LIFECYCLE FIX (Item 5): this is a TERMINAL
+                    // pre-engine failure — the payment can never run. Leaving
+                    // the reservation active double-counts the commitment
+                    // forever (the task is terminal so recovery skips it).
+                    // Release it, mirroring the Invalid-agent-ID abort above.
+                    let _ = release_reservation_inner(task_id, "payment_pre_transfer_abort");
+                    return Err(PaymentExecResult::Failed(
+                        "Policy hierarchy invalid".to_string(),
+                    ));
+                }
+            },
+            Ok(None) => {
                 task.status = TaskStatus::PaymentFailed;
-                task.payment_error = Some("Policy hierarchy invalid".to_string());
+                task.payment_error = Some("Agent policy missing".to_string());
                 let _ = write_json_atomic(&task_path(task_id), &task);
-                // RESERVATION-LIFECYCLE FIX (Item 5): this is a TERMINAL
-                // pre-engine failure — the payment can never run. Leaving
-                // the reservation active double-counts the commitment
-                // forever (the task is terminal so recovery skips it).
-                // Release it, mirroring the Invalid-agent-ID abort above.
+                // RESERVATION-LIFECYCLE FIX (Item 5): same terminal pre-engine
+                // abort — release the reservation (safe: the engine never ran,
+                // no irreversible payment action occurred).
                 let _ = release_reservation_inner(task_id, "payment_pre_transfer_abort");
                 return Err(PaymentExecResult::Failed(
-                    "Policy hierarchy invalid".to_string(),
+                    "Agent policy missing".to_string(),
                 ));
             }
-        },
-        Ok(None) => {
-            task.status = TaskStatus::PaymentFailed;
-            task.payment_error = Some("Agent policy missing".to_string());
-            let _ = write_json_atomic(&task_path(task_id), &task);
-            // RESERVATION-LIFECYCLE FIX (Item 5): same terminal pre-engine
-            // abort — release the reservation (safe: the engine never ran,
-            // no irreversible payment action occurred).
-            let _ = release_reservation_inner(task_id, "payment_pre_transfer_abort");
-            return Err(PaymentExecResult::Failed(
-                "Agent policy missing".to_string(),
-            ));
-        }
-        Err(_) => {
-            task.status = TaskStatus::PaymentFailed;
-            task.payment_error = Some("Policy read error".to_string());
-            let _ = write_json_atomic(&task_path(task_id), &task);
-            // RESERVATION-LIFECYCLE FIX (Item 5): same terminal pre-engine
-            // abort — release the reservation. Fail-closed accounting for
-            // reads is preserved at the QUERY level; a definitive gateway
-            // failure of the task itself must not hold the commitment.
-            let _ = release_reservation_inner(task_id, "payment_pre_transfer_abort");
-            return Err(PaymentExecResult::Failed("Policy read error".to_string()));
+            Err(_) => {
+                task.status = TaskStatus::PaymentFailed;
+                task.payment_error = Some("Policy read error".to_string());
+                let _ = write_json_atomic(&task_path(task_id), &task);
+                // RESERVATION-LIFECYCLE FIX (Item 5): same terminal pre-engine
+                // abort — release the reservation. Fail-closed accounting for
+                // reads is preserved at the QUERY level; a definitive gateway
+                // failure of the task itself must not hold the commitment.
+                let _ = release_reservation_inner(task_id, "payment_pre_transfer_abort");
+                return Err(PaymentExecResult::Failed("Policy read error".to_string()));
+            }
         }
     };
 
@@ -3180,8 +3320,9 @@ fn test_recovery_repairs_orphaned_active_reservation_on_terminal_task() {
 fn test_approval_from_submitted_reaches_bridge_and_refuses_repeat() {
     // First approval: Submitted -> PaymentPending (the Phase-4 edge).
     assert!(TaskStatus::Submitted.can_transition(TaskStatus::PaymentPending));
-    // Reject/RequestRevision remain UnderReview-gated (unchanged).
-    assert!(!TaskStatus::Submitted.can_transition(TaskStatus::Rejected));
+    // Owner review: reject is allowed directly from Submitted; revision
+    // requests remain UnderReview-gated.
+    assert!(TaskStatus::Submitted.can_transition(TaskStatus::Rejected));
     assert!(!TaskStatus::Submitted.can_transition(TaskStatus::RevisionRequested));
     // Duplicate approval: PaymentPending can never re-enter PaymentPending.
     assert!(!TaskStatus::PaymentPending.can_transition(TaskStatus::PaymentPending));
