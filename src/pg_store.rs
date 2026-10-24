@@ -1657,6 +1657,41 @@ pub async fn registry_register_user_wallet(
     }
 }
 
+pub async fn registry_replace_user_wallet(
+    user_id: u64,
+    old_pubkey: &str,
+    new_pubkey: &str,
+    now: i64,
+) -> Result<(), StoreError> {
+    match storage_mode() {
+        StorageMode::Filesystem => Err(StoreError::ModeMismatch),
+        StorageMode::Postgres => {
+            runtime_pg()?;
+            let rows = global_client()
+                .await
+                .query(
+                    r#"UPDATE user_wallets
+                       SET pubkey = $3, created_at = $4
+                       WHERE user_id = $1 AND pubkey = $2
+                       RETURNING pubkey"#,
+                    &[&(user_id as i64), &old_pubkey, &new_pubkey, &now],
+                )
+                .await
+                .map_err(|e| StoreError::Db(e.to_string()))?;
+            let stored = rows
+                .first()
+                .map(|r| r.get::<_, String>(0))
+                .unwrap_or_default();
+            if stored != new_pubkey {
+                return Err(StoreError::Db(format!(
+                    "user_wallets pubkey conflict for user {user_id}: registered pubkey differs"
+                )));
+            }
+            Ok(())
+        }
+    }
+}
+
 pub async fn delete_session_authoritative(session_id: &str) -> Result<bool, StoreError> {
     match storage_mode() {
         StorageMode::Filesystem => Err(StoreError::ModeMismatch),
