@@ -223,12 +223,21 @@ fn program_payment_guard(state: &AppState, amount_rlo: Option<f64>) -> Result<()
     Ok(())
 }
 
+/// Additive preview-only OAuth callback. The production `/auth/github`
+/// callback remains `GITHUB_REDIRECT_URI` and is not altered by this lane.
+const PREVIEW_GITHUB_REDIRECT_URI: &str =
+    "https://rialo-agentpay-preview.pages.dev/auth/github/preview/callback";
+
 #[derive(Clone)]
 struct AppState {
     client: reqwest::Client,
     client_id: String,
     client_secret: String,
     redirect_uri: String,
+    /// Optional second GitHub OAuth redirect for the isolated static preview.
+    /// This is additive: the production `/auth/github` flow keeps using
+    /// `redirect_uri` above and is never changed by the preview lane.
+    preview_redirect_uri: Option<String>,
     oauth_states: Arc<Mutex<HashMap<String, Instant>>>,
     sessions: Arc<Mutex<HashMap<String, GithubUser>>>,
     wallets: Arc<Mutex<HashMap<u64, Keypair>>>,
@@ -801,6 +810,10 @@ async fn main() {
     // PHASE 11 — capture the process-global Rialo handle for the tasks
     // payout bridge BEFORE any request can reach the marketplace routes.
     let _ = tasks_set_rialo_handle(rialo.clone());
+    let preview_redirect_uri = Some(
+        env::var("GITHUB_PREVIEW_REDIRECT_URI")
+            .unwrap_or_else(|_| PREVIEW_GITHUB_REDIRECT_URI.to_string()),
+    );
     let state = AppState {
         client: reqwest::Client::builder()
             .user_agent("Rialo-AgentPay/0.1")
@@ -809,6 +822,7 @@ async fn main() {
         client_id,
         client_secret,
         redirect_uri,
+        preview_redirect_uri,
         oauth_states: Arc::new(Mutex::new(HashMap::new())),
         sessions: Arc::new(Mutex::new(HashMap::new())),
         wallets: Arc::new(Mutex::new(HashMap::new())),
@@ -826,6 +840,13 @@ async fn main() {
     let app = Router::new()
         .route("/auth/github", get(github_login))
         .route("/auth/github/callback", get(github_callback))
+        // Additive, isolated preview lane. Uses the same OAuth app credentials
+        // but a distinct redirect URI; the production routes above are unchanged.
+        .route("/auth/github/preview", get(github_login_preview))
+        .route(
+            "/auth/github/preview/callback",
+            get(github_callback_preview),
+        )
         .route("/auth/wallet-recover", post(recover_wallet))
         .route("/auth/logout", post(logout))
         .route("/api/me", get(current_user))
@@ -1240,6 +1261,22 @@ fn rate_limited_response(retry_after_ms: u64) -> Response {
 }
 
 async fn github_login(State(state): State<AppState>) -> Response {
+    let redirect_uri = state.redirect_uri.clone();
+    github_login_with_redirect(state, redirect_uri).await
+}
+
+async fn github_login_preview(State(state): State<AppState>) -> Response {
+    match state.preview_redirect_uri.clone() {
+        Some(redirect_uri) => github_login_with_redirect(state, redirect_uri).await,
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Preview login is not configured",
+        )
+            .into_response(),
+    }
+}
+
+async fn github_login_with_redirect(state: AppState, redirect_uri: String) -> Response {
     let oauth_state = Uuid::new_v4().to_string();
 
     {
@@ -1311,7 +1348,7 @@ async fn github_login(State(state): State<AppState>) -> Response {
     let authorize_url = format!(
         "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read%3Auser&state={}",
         url_encode(&state.client_id),
-        url_encode(&state.redirect_uri),
+        url_encode(&redirect_uri),
         url_encode(&oauth_state),
     );
 
@@ -1321,6 +1358,29 @@ async fn github_login(State(state): State<AppState>) -> Response {
 async fn github_callback(
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,
+) -> Response {
+    let redirect_uri = state.redirect_uri.clone();
+    github_callback_with_redirect(state, query, redirect_uri).await
+}
+
+async fn github_callback_preview(
+    State(state): State<AppState>,
+    Query(query): Query<CallbackQuery>,
+) -> Response {
+    match state.preview_redirect_uri.clone() {
+        Some(redirect_uri) => github_callback_with_redirect(state, query, redirect_uri).await,
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Preview login is not configured",
+        )
+            .into_response(),
+    }
+}
+
+async fn github_callback_with_redirect(
+    state: AppState,
+    query: CallbackQuery,
+    redirect_uri: String,
 ) -> Response {
     if let Some(error) = query.error {
         return (
@@ -1397,7 +1457,7 @@ async fn github_callback(
             ("client_id", state.client_id.as_str()),
             ("client_secret", state.client_secret.as_str()),
             ("code", code.as_str()),
-            ("redirect_uri", state.redirect_uri.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
         ])
         .send()
         .await
@@ -2759,6 +2819,7 @@ fn __unit_test_app_state() -> AppState {
         client_id: "test".into(),
         client_secret: "test".into(),
         redirect_uri: "http://127.0.0.1:8080/auth/github/callback".into(),
+        preview_redirect_uri: Some("https://preview.example/auth/github/preview/callback".into()),
         oauth_states: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         sessions: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         wallets: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
@@ -2795,6 +2856,9 @@ mod set_cookie_regression_tests {
             client_id: "x".into(),
             client_secret: "x".into(),
             redirect_uri: "http://localhost/callback".into(),
+            preview_redirect_uri: Some(
+                "https://preview.example/auth/github/preview/callback".into(),
+            ),
             oauth_states: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
@@ -2914,6 +2978,9 @@ pub(crate) mod dev_login_endpoint_tests {
             client_id: "x".into(),
             client_secret: "x".into(),
             redirect_uri: "http://localhost/callback".into(),
+            preview_redirect_uri: Some(
+                "https://preview.example/auth/github/preview/callback".into(),
+            ),
             oauth_states: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),

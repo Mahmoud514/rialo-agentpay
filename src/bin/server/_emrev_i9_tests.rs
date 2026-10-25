@@ -231,6 +231,7 @@ fn test_state(owner: u64) -> (crate::AppState, String) {
         client_id: "test".into(),
         client_secret: "test".into(),
         redirect_uri: "http://localhost".into(),
+        preview_redirect_uri: None,
         oauth_states: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         sessions: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         wallets: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
