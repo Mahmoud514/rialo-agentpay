@@ -134,6 +134,7 @@ mod verify_tests {
             client_id: "x".into(),
             client_secret: "x".into(),
             redirect_uri: "http://localhost/callback".into(),
+            preview_redirect_uri: None,
             oauth_states: Arc::new(Mutex::new(HashMap::new())),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             wallets: Arc::new(Mutex::new(HashMap::new())),

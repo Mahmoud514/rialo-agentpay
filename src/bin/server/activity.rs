@@ -2096,6 +2096,7 @@ mod activity_tests {
             client_id: "test".to_string(),
             client_secret: "test".to_string(),
             redirect_uri: "http://localhost".to_string(),
+            preview_redirect_uri: None,
             oauth_states: Arc::new(Mutex::new(std::collections::HashMap::new())),
             sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
             wallets: Arc::new(Mutex::new(std::collections::HashMap::new())),

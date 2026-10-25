@@ -3574,6 +3574,7 @@ fn test_sweep_router_live_socket_end_to_end() {
                     client_id: "x".into(),
                     client_secret: "x".into(),
                     redirect_uri: "http://localhost/callback".into(),
+                    preview_redirect_uri: None,
                     oauth_states: std::sync::Arc::new(std::sync::Mutex::new(
                         std::collections::HashMap::new(),
                     )),
@@ -4157,6 +4158,7 @@ fn test_marketplace_payment_handler_live_socket_reaches_engine_boundary() {
                     client_id: "x".into(),
                     client_secret: "x".into(),
                     redirect_uri: "http://localhost/callback".into(),
+                    preview_redirect_uri: None,
                     oauth_states: std::sync::Arc::new(std::sync::Mutex::new(
                         std::collections::HashMap::new(),
                     )),
@@ -4349,6 +4351,7 @@ fn test_review_approve_http_reaches_bridge_and_failed_outcome_releases() {
                         client_id: "x".into(),
                         client_secret: "x".into(),
                         redirect_uri: "http://localhost/callback".into(),
+                        preview_redirect_uri: None,
                         oauth_states: std::sync::Arc::new(std::sync::Mutex::new(
                             std::collections::HashMap::new(),
                         )),
@@ -4584,6 +4587,7 @@ fn test_sweep_handler_auth_and_recovery_classification() {
                     client_id: "x".into(),
                     client_secret: "x".into(),
                     redirect_uri: "http://localhost/callback".into(),
+                    preview_redirect_uri: None,
                     oauth_states: std::sync::Arc::new(std::sync::Mutex::new(
                         std::collections::HashMap::new(),
                     )),
@@ -4871,6 +4875,7 @@ mod pg_taskpay_tests {
                 client_id: "x".into(),
                 client_secret: "x".into(),
                 redirect_uri: "http://localhost/callback".into(),
+                preview_redirect_uri: None,
                 oauth_states: std::sync::Arc::new(std::sync::Mutex::new(
                     std::collections::HashMap::new(),
                 )),
@@ -5058,6 +5063,7 @@ mod pg_taskpay_tests {
                 client_id: "x".into(),
                 client_secret: "x".into(),
                 redirect_uri: "http://localhost/callback".into(),
+                preview_redirect_uri: None,
                 oauth_states: std::sync::Arc::new(std::sync::Mutex::new(
                     std::collections::HashMap::new(),
                 )),

@@ -367,6 +367,7 @@ pub(crate) mod tests252 {
             client_id: "x".into(),
             client_secret: "x".into(),
             redirect_uri: "http://localhost/callback".into(),
+            preview_redirect_uri: None,
             oauth_states: Arc::new(Mutex::new(HashMap::new())),
             sessions: Arc::new(Mutex::new(sessions)),
             wallets: Arc::new(Mutex::new(HashMap::new())),
