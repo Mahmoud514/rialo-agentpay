@@ -1736,7 +1736,11 @@ fn eip191_message_hash(message: &str) -> [u8; 32] {
 }
 
 fn recover_evm_address(message: &str, signature_hex: &str) -> Option<String> {
-    let bytes = decode_hex_bytes(signature_hex).filter(|b| b.len() == 65)?;
+    let raw = signature_hex
+        .strip_prefix("0x")
+        .or_else(|| signature_hex.strip_prefix("0X"))
+        .unwrap_or(signature_hex);
+    let bytes = decode_hex_bytes(raw).filter(|b| b.len() == 65)?;
     let recovery_byte = bytes[64];
     let recovery_id = k256::ecdsa::RecoveryId::from_byte(
         recovery_byte.checked_sub(27).unwrap_or(recovery_byte),
