@@ -367,6 +367,25 @@ struct CallbackQuery {
     error: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct WalletNonceRequest {
+    address: String,
+}
+
+#[derive(Deserialize)]
+struct WalletVerifyRequest {
+    address: String,
+    nonce: String,
+    signature_hex: String,
+}
+
+#[derive(Serialize)]
+struct WalletNonceResponse {
+    success: bool,
+    nonce: String,
+    message: String,
+}
+
 #[derive(Serialize)]
 struct SessionResponse {
     logged_in: bool,
@@ -847,6 +866,9 @@ async fn main() {
             "/auth/github/preview/callback",
             get(github_callback_preview),
         )
+        // Wallet sign-in: nonce + ed25519 signature (no OAuth redirect).
+        .route("/auth/wallet/nonce", post(wallet_login_nonce))
+        .route("/auth/wallet/verify", post(wallet_login_verify))
         .route("/auth/wallet-recover", post(recover_wallet))
         .route("/auth/logout", post(logout))
         .route("/api/me", get(current_user))
@@ -1651,6 +1673,274 @@ async fn github_callback_with_redirect(
     headers.insert(header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
 
     (headers, Redirect::temporary("/")).into_response()
+}
+
+/// Exact UTF-8 message a wallet must sign for the preview wallet lane.
+fn wallet_login_message(address: &str, nonce: &str) -> String {
+    format!(
+        "Rialo AgentPay wallet login\nAddress: {}\nNonce: {}",
+        address, nonce
+    )
+}
+
+fn wallet_nonce_key(address: &str, nonce: &str) -> String {
+    format!("wallet-login:{}:{}", address, nonce)
+}
+
+fn wallet_user_id(address: &str) -> u64 {
+    let hash = blake3::hash(address.as_bytes());
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&hash.as_bytes()[..8]);
+    (u64::from_be_bytes(bytes) & 0x3fff_ffff_ffff_ffff) | 0x4000_0000_0000_0000
+}
+
+fn decode_hex_bytes(input: &str) -> Option<Vec<u8>> {
+    if input.len() % 2 != 0 || input.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(input.len() / 2);
+    let bytes = input.as_bytes();
+    for pair in bytes.chunks_exact(2) {
+        let hi = (pair[0] as char).to_digit(16)?;
+        let lo = (pair[1] as char).to_digit(16)?;
+        out.push(((hi << 4) | lo) as u8);
+    }
+    Some(out)
+}
+
+fn normalize_evm_address(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.len() != 42 || !trimmed.starts_with("0x") {
+        return None;
+    }
+    if !trimmed[2..].bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("0x{}", trimmed[2..].to_ascii_lowercase()))
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn eip191_message_hash(message: &str) -> [u8; 32] {
+    use sha3::Digest;
+    let mut hasher = sha3::Keccak256::new();
+    hasher.update(b"\x19Ethereum Signed Message:\n");
+    hasher.update(message.len().to_string().as_bytes());
+    hasher.update(message.as_bytes());
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
+}
+
+fn recover_evm_address(message: &str, signature_hex: &str) -> Option<String> {
+    let bytes = decode_hex_bytes(signature_hex).filter(|b| b.len() == 65)?;
+    let recovery_byte = bytes[64];
+    let recovery_id = k256::ecdsa::RecoveryId::from_byte(
+        recovery_byte.checked_sub(27).unwrap_or(recovery_byte),
+    )?;
+    let signature = k256::ecdsa::Signature::from_slice(&bytes[..64]).ok()?;
+    let digest = eip191_message_hash(message);
+    let verifying = k256::ecdsa::VerifyingKey::recover_from_prehash(
+        &digest,
+        &signature,
+        recovery_id,
+    )
+    .ok()?;
+    let encoded = verifying.to_encoded_point(false);
+    let public = &encoded.as_bytes()[1..];
+    use sha3::Digest;
+    let address_hash = sha3::Keccak256::digest(public);
+    Some(format!("0x{}", encode_hex(&address_hash[12..])))
+}
+
+async fn wallet_login_nonce(
+    State(state): State<AppState>,
+    Json(request): Json<WalletNonceRequest>,
+) -> Response {
+    let Some(normalized_address) = normalize_evm_address(&request.address) else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "WALLET_ADDRESS_INVALID",
+            "A 0x-prefixed EVM wallet address is required.",
+        );
+    };
+    let nonce = Uuid::new_v4().to_string();
+    let key = wallet_nonce_key(&normalized_address, &nonce);
+    let now = agents::now_unix();
+
+    if matches!(
+        crate::pg_store::storage_mode(),
+        crate::pg_store::StorageMode::Postgres
+    ) {
+        let persisted = tokio::task::block_in_place(|| {
+            let key = key.clone();
+            tokio::runtime::Handle::current().block_on(async move {
+                crate::pg_store::insert_oauth_state_authoritative(&key, now).await
+            })
+        });
+        if let Err(err) = persisted {
+            eprintln!("wallet nonce persist failed (PG, fail-closed): {err}");
+            return api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "WALLET_LOGIN_UNAVAILABLE",
+                "Wallet login persistence is unavailable.",
+            );
+        }
+    } else {
+        let mut states = state.oauth_states.lock().unwrap();
+        states.retain(|_, created| created.elapsed() < Duration::from_secs(600));
+        states.insert(key, Instant::now());
+    }
+
+    Json(WalletNonceResponse {
+        success: true,
+        message: wallet_login_message(&request.address, &nonce),
+        nonce,
+    })
+    .into_response()
+}
+
+async fn wallet_login_verify(
+    State(state): State<AppState>,
+    Json(request): Json<WalletVerifyRequest>,
+) -> Response {
+    let Some(normalized_address) = normalize_evm_address(&request.address) else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "WALLET_ADDRESS_INVALID",
+            "A 0x-prefixed EVM wallet address is required.",
+        );
+    };
+    if request.nonce.len() < 8 || request.nonce.len() > 128 {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "WALLET_NONCE_INVALID",
+            "A valid login nonce is required.",
+        );
+    }
+
+    let key = wallet_nonce_key(&normalized_address, &request.nonce);
+    let valid = if matches!(
+        crate::pg_store::storage_mode(),
+        crate::pg_store::StorageMode::Postgres
+    ) {
+        let key_for_block = key.clone();
+        let consumed = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                crate::pg_store::consume_oauth_state_authoritative(&key_for_block).await
+            })
+        });
+        match consumed {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!("wallet nonce consume failed (PG, fail-closed): {err}");
+                false
+            }
+        }
+    } else {
+        let mut states = state.oauth_states.lock().unwrap();
+        states
+            .remove(&key)
+            .map(|created| created.elapsed() < Duration::from_secs(600))
+            .unwrap_or(false)
+    };
+    if !valid {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "WALLET_NONCE_INVALID",
+            "Invalid or expired wallet login nonce.",
+        );
+    }
+
+    let message = wallet_login_message(&request.address, &request.nonce);
+    let Some(recovered) = recover_evm_address(&message, &request.signature_hex) else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "WALLET_SIGNATURE_INVALID",
+            "A 65-byte EVM personal_sign signature is required.",
+        );
+    };
+    if recovered != normalized_address {
+        return api_error(
+            StatusCode::UNAUTHORIZED,
+            "WALLET_SIGNATURE_INVALID",
+            "The wallet signature does not verify for this address and nonce.",
+        );
+    }
+
+    let user = GithubUser {
+        id: wallet_user_id(&normalized_address),
+        login: request.address.clone(),
+        name: Some("Wallet user".to_string()),
+        avatar_url: None,
+    };
+
+    // Wallet login is an identity, not a browser-side money signer. The app's
+    // existing server-side payment lane keeps its own wallet; this mints or
+    // loads that wallet through the same strict path as a GitHub first login.
+    let uid = user.id;
+    let wallet = tokio::task::spawn_blocking(move || strict_wallet_load_or_mint(uid))
+        .await
+        .expect("wallet spawn_blocking join");
+    if let Err(err) = wallet {
+        eprintln!("wallet login wallet load/mint failed for user {uid}: {err}");
+        return api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "WALLET_LOGIN_UNAVAILABLE",
+            "The account wallet is temporarily unavailable.",
+        );
+    }
+
+    let session_id = Uuid::new_v4().to_string();
+    if matches!(
+        crate::pg_store::storage_mode(),
+        crate::pg_store::StorageMode::Postgres
+    ) {
+        let persisted = tokio::task::block_in_place(|| {
+            let session_id = session_id.clone();
+            let (uid, login) = (user.id, user.login.clone());
+            tokio::runtime::Handle::current().block_on(async move {
+                crate::pg_store::insert_session_authoritative(
+                    &session_id,
+                    uid,
+                    &login,
+                    agents::now_unix(),
+                )
+                .await
+            })
+        });
+        if let Err(err) = persisted {
+            eprintln!("wallet session persist failed (PG, fail-closed): {err}");
+            return api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "WALLET_LOGIN_UNAVAILABLE",
+                "Session persistence is unavailable; login failed closed.",
+            );
+        }
+    }
+
+    {
+        let mut sessions = state.sessions.lock().unwrap();
+        sessions.insert(session_id.clone(), user.clone());
+    }
+
+    let cookie = format!(
+        "agentpay_session={}; Path=/; HttpOnly; SameSite=Lax{}",
+        session_id,
+        cookie_secure_attr()
+    );
+    let mut response = Json(serde_json::json!({
+        "success": true,
+        "user": user,
+    }))
+    .into_response();
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        response.headers_mut().insert(header::SET_COOKIE, value);
+    }
+    response
 }
 
 /// Resolve the session user from the request cookies (no side effects).
