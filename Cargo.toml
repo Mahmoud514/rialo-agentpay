@@ -56,6 +56,17 @@ default-features = false
 features = ["tokio"]
 optional = true
 
+[dependencies.k256]
+version = "0.13.4"
+default-features = false
+features = ["ecdsa", "std"]
+optional = true
+
+[dependencies.sha3]
+version = "0.10.9"
+default-features = false
+optional = true
+
 [features]
 implementation = [
     "dep:serde",
@@ -78,6 +89,8 @@ server = [
     "dep:tokio",
     "dep:tower-http",
     "dep:uuid","dep:blake3", "dep:rialo-s-signature",
+    "dep:k256",
+    "dep:sha3",
     "dep:tokio-postgres",
     "dep:postgresql_embedded",
     "dep:tokio-postgres-rustls",
