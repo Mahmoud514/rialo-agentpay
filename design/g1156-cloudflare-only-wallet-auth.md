@@ -31,7 +31,7 @@ Rialo signing remain on the existing backend/signer boundaries.
 D1 database: rialo-agentpay-preview-auth
 Pages project: rialo-agentpay-preview
 Preview binding: DB -> rialo-agentpay-preview-auth
-Preview alias: https://g1156-d1.rialo-agentpay-preview.pages.dev
+Preview alias: https://rialo-agentpay-preview.pages.dev
 ```
 
 Apply the schema to the isolated database before deploying:
@@ -56,7 +56,7 @@ Cloudflare preview + D1:
 
 ```text
 node scripts/verify-d1-wallet-e2e.mjs \
-  https://g1156-d1.rialo-agentpay-preview.pages.dev
+  https://rialo-agentpay-preview.pages.dev
 ```
 
 Both returned HTTP 200 for nonce, verify, and `/api/me`, with
