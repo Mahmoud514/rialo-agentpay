@@ -16,18 +16,12 @@ const functions = (() => {
   return walk(path.join(root, "functions")).join("\n");
 })();
 
-test("task mutations remain behind the trusted backend boundary", () => {
-  for (const marker of [
-    "INSERT INTO tasks",
-    "UPDATE tasks",
-    "DELETE FROM tasks",
-    "/cancel",
-    "/claim",
-    "/submit",
-    "/review",
-  ]) {
-    assert.equal(functions.includes(marker), false, `unexpected Worker task mutation: ${marker}`);
-  }
+test("Worker task mutations are metadata-only and cannot approve value", () => {
+  // The Cloudflare preview owns task metadata in D1, but approval is a
+  // money-moving operation and must remain behind the isolated signer.
+  assert.equal(functions.includes('PAYOUT_UNAVAILABLE'), true);
+  assert.equal(functions.includes('INSERT INTO payment_intents'), false);
+  assert.equal(functions.includes('status = \'paid\''), false);
 });
 
 test("value movement and OAuth/recovery remain unowned by the Worker", () => {

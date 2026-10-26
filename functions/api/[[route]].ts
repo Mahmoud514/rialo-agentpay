@@ -12,6 +12,8 @@ import { createAgentReadMiddleware } from "../_lib/agents/read-agents.js";
 import { createLeaderboardMiddleware } from "../_lib/agents/leaderboard.js";
 import { createTaskReadMiddleware } from "../_lib/tasks/read-task.js";
 import { handleOpenTasksRequest } from "../_lib/tasks/open-tasks.js";
+import { handleAppRequest } from "../_lib/app/api.js";
+import { handleSystemRequest } from "../_lib/app/system.js";
 import { proxyRequest } from "../_lib/proxy.js";
 
 const agentRead = createAgentReadMiddleware();
@@ -49,5 +51,9 @@ export const onRequest = async (context) => {
             if (taskResponse) return taskResponse;
         }
     }
+    const systemResponse = handleSystemRequest(context);
+    if (systemResponse) return systemResponse;
+    const appResponse = await handleAppRequest(context);
+    if (appResponse) return appResponse;
     return proxyRequest(context);
 };

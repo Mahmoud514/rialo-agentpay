@@ -4,7 +4,7 @@
 // visible only to an authenticated caller. The row is read from Neon and is
 // never synthesized. The response keeps the backend envelope so the existing
 // frontend can consume it without a proxy.
-import { createNeonStore } from "../auth/neon-store.js";
+import { createAuthStore } from "../auth/store.js";
 import { readSessionCookie, sessionHash } from "../auth/session.js";
 
 function json(body, status = 200) {
@@ -22,7 +22,7 @@ function error(code, message, status) {
 }
 
 export function createTaskReadHandlers({
-  createStore = createNeonStore,
+  createStore = createAuthStore,
   now = () => Math.floor(Date.now() / 1000),
 } = {}) {
   async function optionalSession(store, request) {

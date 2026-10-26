@@ -7,7 +7,7 @@
 // The response shape matches the existing GET /api/tasks/open contract:
 // { tasks: [...], count: number }. It reads Neon only and never calls Blitz.
 
-import { createNeonStore } from "../auth/neon-store.js";
+import { createAuthStore } from "../auth/store.js";
 import { readSessionCookie, sessionHash } from "../auth/session.js";
 
 function json(body, status = 200, headers = {}) {
@@ -65,7 +65,7 @@ export async function handleOpenTasks(request, store, { now = Math.floor(Date.no
   });
 }
 
-export function createOpenTasksHandler({ createStore = createNeonStore, now } = {}) {
+export function createOpenTasksHandler({ createStore = createAuthStore, now } = {}) {
   return async function handleOpenTasksRequest(context) {
     let store;
     try {

@@ -5,7 +5,7 @@
 // same 404, matching the backend's non-enumerating contract. Mutating agent
 // routes remain proxied.
 
-import { createNeonStore } from "../auth/neon-store.js";
+import { createAuthStore } from "../auth/store.js";
 import { readSessionCookie, sessionHash } from "../auth/session.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -49,7 +49,7 @@ async function getSessionUser(store, request, now) {
   });
 }
 
-export function createAgentReadHandlers({ createStore = createNeonStore, now } = {}) {
+export function createAgentReadHandlers({ createStore = createAuthStore, now } = {}) {
   function clock() {
     return typeof now === "function" ? now() : Math.floor(Date.now() / 1000);
   }

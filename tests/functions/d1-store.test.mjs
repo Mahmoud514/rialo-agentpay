@@ -33,6 +33,7 @@ function d1(sqlite) {
 function newStore() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec(readFileSync(new URL("../../migrations/0009_d1_auth.sql", import.meta.url), "utf8"));
+  sqlite.exec(readFileSync(new URL("../../migrations/0010_d1_app.sql", import.meta.url), "utf8"));
   return { sqlite, store: createD1Store(d1(sqlite)) };
 }
 
@@ -116,4 +117,24 @@ test("D1 store persists identity, session, wallet and provisioning projections",
   assert.equal(await store.enqueueProvisioning(42, 10), false);
   assert.equal((await store.getProvisioning(42)).state, "pending");
   assert.equal(await store.getUserWallet(42), null);
+});
+
+test("D1 app projection supports owner agents, policy and task lifecycle", async () => {
+  const { store } = newStore();
+  const clock = Math.floor(Date.now() / 1000);
+  const agent = await store.createAgent("42", "11111111-1111-4111-8111-111111111111", "Test Agent", clock);
+  assert.equal(agent.status, "draft");
+  assert.equal((await store.listAgents("42")).length, 1);
+  assert.equal((await store.getAgent("99", agent.agent_id)), null);
+  await store.renameAgent("42", agent.agent_id, "Renamed", clock + 1);
+  assert.equal((await store.getAgent("42", agent.agent_id)).name, "Renamed");
+  assert.equal((await store.setAgentStatus("42", agent.agent_id, "active", clock + 2)).agent.status, "active");
+  await store.setAgentPolicy("42", agent.agent_id, { allowed_actions: ["payment"] }, clock + 3);
+  assert.deepEqual((await store.getAgentPolicy("42", agent.agent_id)).allowed_actions, ["payment"]);
+  const task = await store.createTask({ task_id: "22222222-2222-4222-8222-222222222222", owner_user_id: "42", owner_name: "owner", agent_id: agent.agent_id, title: "Task", description: "d", acceptance_criteria: "a", reward_kelvin: 1000, created_at: clock });
+  assert.equal(task.status, "open");
+  assert.equal((await store.claimTask(task.task_id, "99", "worker", "A".repeat(32), clock + 4)).task.status, "inprogress");
+  assert.equal((await store.claimTask(task.task_id, "100", "worker2", "B".repeat(32), clock + 5)).conflict, true);
+  assert.equal((await store.submitTask(task.task_id, "99", "https://example.test", "done", [], clock + 6)).task.status, "underreview");
+  assert.equal((await store.reviewTask(task.task_id, "42", "reject", "no", clock + 7)).task.status, "rejected");
 });

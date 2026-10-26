@@ -3,7 +3,7 @@
 // Owner-scoped, read-only projection over the same Neon tables the backend
 // uses. It never calls Blitz and never invents a row: a query failure is a
 // typed 500 AGENT_STORE_ERROR, never a partial board.
-import { createNeonStore } from "../auth/neon-store.js";
+import { createAuthStore } from "../auth/store.js";
 import { readSessionCookie, sessionHash } from "../auth/session.js";
 
 const ORDER =
@@ -50,7 +50,7 @@ function rowJson(row) {
 }
 
 export function createLeaderboardHandlers({
-  createStore = createNeonStore,
+  createStore = createAuthStore,
   now = () => Math.floor(Date.now() / 1000),
 } = {}) {
   async function list(context) {
