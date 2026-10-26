@@ -1,5 +1,10 @@
 # G1156 — Live wallet-login blocker
 
+> **Update:** the Worker/D1 preview path now succeeds (nonce, verify, and
+> `/api/me` return 200 with a synthetic test key). The 503 below remains the
+> observed Blitz/backend behavior; it is no longer on the Cloudflare-only path.
+> Production Blitz was not changed.
+
 Observed during the actual browser attempt on **2026-10-26** (UTC):
 
 ```text
