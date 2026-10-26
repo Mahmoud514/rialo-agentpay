@@ -53,7 +53,7 @@ optional = true
 [dependencies.postgresql_embedded]
 version = "=0.20.0"
 default-features = false
-features = ["tokio"]
+features = ["tokio", "blocking"]
 optional = true
 
 [dependencies.k256]
@@ -63,6 +63,11 @@ features = ["ecdsa", "std"]
 optional = true
 
 [dependencies.sha3]
+version = "0.10.9"
+default-features = false
+optional = true
+
+[dependencies.sha2]
 version = "0.10.9"
 default-features = false
 optional = true
@@ -91,6 +96,7 @@ server = [
     "dep:uuid","dep:blake3", "dep:rialo-s-signature",
     "dep:k256",
     "dep:sha3",
+    "dep:sha2",
     "dep:tokio-postgres",
     "dep:postgresql_embedded",
     "dep:tokio-postgres-rustls",

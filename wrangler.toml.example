@@ -1,0 +1,18 @@
+# EXAMPLE ONLY — do not copy to wrangler.toml for production without review.
+# It intentionally contains no account id, project name binding, secret, route,
+# or custom domain. The Pages project should be configured manually after the
+# reviewed deployment gate.
+
+name = "rialo-agentpay"
+compatibility_date = "2026-10-01"
+pages_build_output_dir = "dist/static"
+
+# Functions are discovered from the repository-root functions/ directory.
+# AUTH_MODE=worker enables Worker auth and owner-scoped agent reads.
+# TASKS_MODE=neon enables read-only task list/open/detail. Both are provider
+# environment values, not secrets. A Functions deployment that serves proxy
+# routes also needs BACKEND (https origin); worker auth / neon tasks need
+# DATABASE_URL. The deploy gate is:
+#   npm run check:functions
+# Do not put values in this example file.
+# Static preview does not need this file or a BACKEND value.

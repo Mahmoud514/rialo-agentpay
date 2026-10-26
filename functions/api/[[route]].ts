@@ -1,120 +1,53 @@
-// G21.12.36 — Cloudflare Pages Functions proxy (public origin ⇄ Koyeb API).
+// Cloudflare Pages Functions — /api/*.
 //
-// SAFETY CONTRACT (approved scope A):
-// - Destination is a SERVER-CONFIGURED env var (BACKEND). The proxy is NOT
-//   an open proxy: only the three fixed prefixes below are ever forwarded,
-//   and the target host can never come from the request.
-// - Backend URL is validated at module load: must be https:// and must not
-//   contain credentials (user:pass form is rejected).
-// - Preserves method, path, query string, JSON body, Content-Type,
-//   Accept, and status codes. Cookie headers are forwarded VERBATIM so the
-//   `agentpay_session` cookie issued by the backend remains same-origin
-//   against the Pages domain (Set-Cookie passes through untouched — the
-//   backend sets Path=/ with no Domain attribute).
-// - Hop-by-hop headers (conn-* trailers, host, cf-*, x-forwarded-*) are
-//   stripped from BOTH directions; the proxy re-derives Host itself.
-//   Browser-controlled forwarding headers (x-forwarded-for/proto/host) are
-//   never copied to the backend (the backend trusts its own origin view.
-//   No auth decision depends on them).
-// - No credentials or secrets EVER live in this file: the backend URL and
-//   OAuth client ids stay in provider environment configuration.
-//
-// DEPLOYMENT (manual, cloud dashboard):
-//   1. Add these files to the repo root under /functions (Pages build
-//      picks them up automatically; no build command needed).
-//   2. Pages project → Settings → Environment variables:
-//        BACKEND = https://<koyeb-service>.koyeb.app
-//   3. In your GitHub OAuth App, set the callback to
-//        https://<pages-domain>/auth/github/callback
-//      (proxy forwards verbatim; cookie lands on the Pages origin so the
-//      frontend reads a same-origin session).
-//   4. Keep AGENTPAY_DISABLE_TRANSFERS=1 and AGENTPAY_COOKIE_SECURE=1 on
-//      the Koyeb service (both end-to-end via env).
-//
-// No open-proxy behavior: unmatched paths 404 at Cloudflare before any
-// function runs.
+// Static preview needs no env at module load. A Functions deployment without
+// BACKEND returns a typed 503 on backend-dependent routes; static assets are
+// still served independently. Worker-owned auth is the default; AUTH_MODE=proxy
+// is the explicit rollback. Worker reads cover /api/me, owned agents,
+// leaderboard, task reads (TASKS_MODE=neon), and schema.
 
-const BACKEND = (globalThis.BACKEND ?? "").replace(/\/+$/, "");
+import { handleMeRequest } from "../_lib/auth/me.js";
+import { handleSchema } from "../_lib/schema.js";
+import { createAgentReadMiddleware } from "../_lib/agents/read-agents.js";
+import { createLeaderboardMiddleware } from "../_lib/agents/leaderboard.js";
+import { createTaskReadMiddleware } from "../_lib/tasks/read-task.js";
+import { handleOpenTasksRequest } from "../_lib/tasks/open-tasks.js";
+import { proxyRequest } from "../_lib/proxy.js";
 
-if (!/^https:\/\/[a-z0-9.\-]+(:\d+)?$/i.test(BACKEND)) {
-    // Fail fast and loud at deploy time; a silent misconfig would open the
-    // door to undefined behavior (or hide the real backend URL entirely).
-    throw new Error(
-        "BACKEND env var must be an https:// host (no path, no credentials)"
-    );
-}
+const agentRead = createAgentReadMiddleware();
+const leaderboardRead = createLeaderboardMiddleware();
+const taskRead = createTaskReadMiddleware();
 
-// Headers never forwarded in either direction.
-const STRIP_REQ = new Set([
-    "host",
-    "cf-connecting-ip",
-    "cf-ipcountry",
-    "cf-ray",
-    "cf-visitor",
-    "cf-worker",
-    "x-forwarded-for",
-    "x-forwarded-proto",
-    "x-forwarded-host",
-    "x-real-ip",
-    "true-client-ip",
-    "forwarded",
-    "content-length", // recomputed after body passthrough
-    "accept-encoding", // let Cloudflare negotiate its own upstream encoding
-]);
-const STRIP_RES = new Set([
-    "content-length",
-    "transfer-encoding",
-    "connection",
-    "keep-alive",
-    "strict-transport-security", // served by Pages itself
-    "access-control-allow-origin", // SSRF/cors-safety: we are same-origin
-    "access-control-allow-credentials",
-    "access-control-allow-headers",
-    "access-control-expose-headers",
-    "vary",
-]);
-
-/** Proxy a Request to the fixed BACKEND preserving method/path/query/body. */
-async function proxyToBackend(request) {
-    const incoming = new URL(request.url);
-    // input path is exactly the one this function matched (Cloudflare
-    // preserves the full original path for [[path]].ts catch-alls).
-    const outURL = new URL(BACKEND + incoming.pathname + incoming.search);
-
-    const headers = new Headers();
-    request.headers.forEach((v, k) => {
-        const lk = k.toLowerCase();
-        if (STRIP_REQ.has(lk)) return;
-        // Cookie passes through: same-origin session cookie round-trip.
-        headers.set(k, v);
-    });
-    // Defense-in-depth: drop any residual auth-adjacent browser headers
-    // that could be abused via crafted requests.
-    ["authorization", "x-api-key"].forEach((h) => headers.delete(h));
-
-    const method = request.method.toUpperCase();
-    const init = {
-        method,
-        headers,
-        redirect: "manual", // OAuth Github redirects handled by the caller
-        body:
-            method === "GET" || method === "HEAD" ? undefined : request.body,
-    };
-
-    const upstream = await fetch(outURL, init);
-
-    const resHeaders = new Headers();
-    upstream.headers.forEach((v, k) => {
-        const lk = k.toLowerCase();
-        if (STRIP_RES.has(lk)) return;
-        resHeaders.set(k, v);
-    });
-
-    return new Response(upstream.body, {
-        status: upstream.status,
-        statusText: upstream.statusText,
-        headers: resHeaders,
-    });
-}
-
-export const onRequest = proxyToBackend;
+export const onRequest = async (context) => {
+    const request = context?.request;
+    if (!request) {
+        return new Response(
+            JSON.stringify({ success: false, error: { code: "PROXY_CONFIG_ERROR", message: "The request is unavailable." } }),
+            { status: 500, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } },
+        );
+    }
+    const mode = String(context?.env?.AUTH_MODE ?? "worker");
+    const path = new URL(request.url).pathname;
+    // Session visibility is Cloudflare-owned for wallet auth. Keep other
+    // API reads behind their explicit mode gates.
+    if (path === "/api/me" && request.method === "GET") {
+        return handleMeRequest(context);
+    }
+    if (mode === "worker" && new URL(request.url).pathname === "/api/schema") {
+        return handleSchema(request);
+    }
+    if (mode === "worker" && request.method === "GET") {
+        const leaderboardResponse = await leaderboardRead(context);
+        if (leaderboardResponse) return leaderboardResponse;
+        const agentResponse = await agentRead(context);
+        if (agentResponse) return agentResponse;
+        if (String(context?.env?.TASKS_MODE ?? "proxy") === "neon") {
+            if (new URL(request.url).pathname === "/api/tasks/open") {
+                return handleOpenTasksRequest(context);
+            }
+            const taskResponse = await taskRead(context);
+            if (taskResponse) return taskResponse;
+        }
+    }
+    return proxyRequest(context);
+};

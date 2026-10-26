@@ -487,7 +487,18 @@ fn provision_agent_wallet(dir: &FsPath, id: &Uuid) -> Result<String, ProvisionEr
     {
         Ok(f) => f,
         Err(ref err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-            return Err(ProvisionError::Exists);
+            // The agent id is the logical operation id. An existing valid
+            // wallet is the durable result of that operation: return its
+            // public address instead of minting a second wallet. An invalid
+            // pre-existing file is not silently replaced.
+            return match fs::symlink_metadata(&path) {
+                Ok(meta) if meta.file_type().is_file() => fs::File::open(&path)
+                    .map_err(io_other)
+                    .and_then(|mut f| rialo_s_keypair::read_keypair(&mut f).map_err(io_other))
+                    .map(|existing| existing.pubkey().to_string())
+                    .map_err(|_| ProvisionError::Exists),
+                _ => Err(ProvisionError::Exists),
+            };
         }
         Err(_) => return Err(ProvisionError::Store),
     };
@@ -502,7 +513,7 @@ fn provision_agent_wallet(dir: &FsPath, id: &Uuid) -> Result<String, ProvisionEr
     // user-wallet pattern); the actual keypair write must succeed.
     let written = rialo_s_keypair::write_keypair(&keypair, &mut file)
         .map_err(io_other)
-        .and_then(|_| file.flush().map_err(io_other));
+        .and_then(|_| file.sync_all().map_err(io_other));
 
     drop(file);
 
@@ -9988,6 +9999,25 @@ mod agent_tests {
         );
         // no new files appeared beside it
         assert_eq!(fs::read_dir(&user_wallets).unwrap().count(), 1);
+
+        cleanup(root);
+    }
+
+    // (7b): a repeated provision for the same agent id returns the existing
+    // public result and never rewrites the file (the agent id is the operation
+    // id; the wallet file is the durable result).
+    #[test]
+    fn repeated_provision_returns_existing_public_result_without_overwrite() {
+        let (_agents, wallets, _authkeys, root) = step3_dirs();
+        fs::create_dir_all(&wallets).unwrap();
+
+        let id = Uuid::new_v4();
+        let first = provision_agent_wallet(&wallets, &id).expect("first provision");
+        let path = agent_wallet_path(&wallets, &id);
+        let before = fs::read(&path).unwrap();
+        let second = provision_agent_wallet(&wallets, &id).expect("idempotent provision");
+        assert_eq!(first, second);
+        assert_eq!(fs::read(&path).unwrap(), before);
 
         cleanup(root);
     }

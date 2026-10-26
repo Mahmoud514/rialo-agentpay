@@ -1,0 +1,19 @@
+{
+  "name": "rialo-agentpay-worker-auth",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:static": "node scripts/build-static.mjs",
+    "check:functions": "node scripts/check-functions-config.mjs",
+    "test:worker-auth": "node --test tests/worker-auth/*.test.mjs",
+    "test:functions": "node --test tests/functions/*.test.mjs",
+    "test:integration": "node --test tests/integration/http-pg.test.mjs",
+    "test:node": "node --test tests/worker-auth/*.test.mjs tests/functions/*.test.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4",
+    "@noble/curves": "^1.8.1",
+    "@noble/hashes": "^1.7.1",
+    "pg": "^8.13.1"
+  }
+}

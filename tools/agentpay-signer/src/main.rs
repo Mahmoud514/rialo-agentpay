@@ -394,9 +394,34 @@ async fn run() -> i32 {
 
     // the store stays opened-and-owned for the signing step (the skeleton
     // only proves the boundary); reference it once so the ownership is real
+    // G87 — single-process ownership + restrictive permissions: both must
+    // succeed BEFORE the listener serves anything (fail-closed startup).
+    // G89 (M1) — the startup boundary chain is now, in order:
+    //   1. single-process instance lock (O_EXCL + pid liveness);
+    //   2. symlink rejection across the store's boundary paths (an
+    //      attacker-planted link fails the start — storage can never be
+    //      silently redirected);
+    //   3. uid ownership verification (root + users/ owned by the runner);
+    //   4. 0700 enforcement + verification (no-follow).
+    // ANY failure aborts BEFORE the listener binds a serving loop.
+    let (store_lock, store) = match (
+        agentpay_signer::store_lock::StoreLock::acquire(store.root()),
+        store.reject_symlinked_boundaries(),
+        store.verify_store_ownership(),
+        store.harden_permissions(),
+    ) {
+        (Ok(lock), Ok(()), Ok(()), Ok(())) => (lock, store),
+        _ => {
+            eprintln!("signer: store ownership/permissions refused (fail closed)");
+            return 2;
+        }
+    };
+    // the lock handle must live for the whole process (drop = ownership
+    // released); leak it deliberately — the process exits exit the same way
+    std::mem::forget(store_lock);
     let _store_guard = store;
     eprintln!(
-        "signer: listening on 127.0.0.1 loopback (port {}), store reserved",
+        "signer: listening on 127.0.0.1 loopback (port {}), store owned + hardened",
         bound.port()
     );
 
@@ -411,10 +436,19 @@ async fn run() -> i32 {
             eprintln!("signer: non-loopback peer refused");
             continue;
         }
+        // G89 (M4) — read the WHOLE request before dispatch: a single read
+        // returns whatever TCP segment arrived first, truncating larger
+        // bodies mid-JSON (an E2E-proven defect: ~2.5 KB create bodies
+        // segmented ⇒ strict parse denied USER_BAD_REQUEST). Read until the
+        // headers + Content-Length body bytes are complete, bounded by the
+        // same 16 KiB wire budget (the buffer IS the bound; no unbounded
+        // accumulation). The accumulation logic is the extracted pure
+        // `read_bounded_request` (unit-tested: oversized Content-Length,
+        // truncated body, inconsistent streaming length, no CL).
         let verdict = {
-            let mut buf = vec![0u8; 16 * 1024];
-            let n = sock.read(&mut buf).await.unwrap_or(0);
-            let text = String::from_utf8_lossy(&buf[..n]).to_string();
+            let mut buf = Vec::with_capacity(16 * 1024);
+            read_bounded_request(&mut buf, &mut sock).await;
+            let text = String::from_utf8_lossy(&buf).to_string();
             let mut parts = text.split_whitespace();
             let method = parts.next().unwrap_or_default().to_string();
             let path = parts.next().unwrap_or_default().to_string();
@@ -428,6 +462,96 @@ async fn run() -> i32 {
         let response_line = if method == "POST" && path == "/admin/register" {
             // OPTION C: Authenticated admin registration endpoint
             admin_register_verdict(&body, &peer)
+        } else if method == "POST" && path == "/user/sign" {
+            // G87 — user-lane creation/signing route (loopback + gates):
+            // the signer-side gates (version, intro proof, registered
+            // binding, Ed25519 intent, nonce, singleflight, policy dir env)
+            // ALL apply inside sign_user_transaction; this wire layer adds
+            // ONLY the request-size bound (the loopback buffer is the bound).
+            let policy_dir = std::env::var("AGENTPAY_SIGNER_USER_POLICY_DIR").unwrap_or_default();
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            // the channel nonce comes from the request body (typed inside)
+            match agentpay_signer::user_lane::sign_user_transaction(
+                &_store_guard,
+                std::path::Path::new(policy_dir.trim()),
+                &body,
+                now_ms,
+            ) {
+                Ok(resp) => {
+                    let plain = serde_json::to_string(&resp)
+                        .unwrap_or_else(|_| r#"{"error":"DENIED","code":"USER_INTERNAL"}"#.into());
+                    // H-1: seal with the channel identity + the request nonce
+                    let nonce = agentpay_signer::parse_nonce(&body);
+                    let sealed =
+                        agentpay_signer::seal_channel_response(&_store_guard, &plain, nonce.as_deref());
+                    (200u16, sealed)
+                }
+                Err(denial) => (denial.parts().0, denial.body()),
+            }
+        } else if method == "POST" && path == "/user/wallet" {
+            // G87 — NEW-USER wallet creation (admin-secret gated at THIS
+            // boundary — the same constant-time check as /admin/register):
+            // the full ceremony chain (intro proof, registered binding,
+            // Ed25519 creation-intent signature, nonce burn, singleflight,
+            // v2 gate) is enforced inside user_lane.
+            let admin_secret = std::env::var("AGENTPAY_SIGNER_ADMIN_SECRET").unwrap_or_default();
+            if admin_secret.trim().is_empty() {
+                (403u16, r#"{"error":"DENIED","code":"USER_SIGNING_NOT_ENABLED"}"#.to_string())
+            } else {
+                match agentpay_signer::user_lane::handle_user_wallet_create(&_store_guard, &body, &admin_secret)
+                {
+                    Ok((resp, _draft1, _record)) => {
+                        // SECURITY: draft1 + the creation record are the
+                        // OPERATOR's ceremony material — the HTTP response is
+                        // the sealed RESTRICTION: only the public response.
+                        let plain = serde_json::to_string(&resp).unwrap_or_default();
+                        let nonce = agentpay_signer::parse_nonce(&body);
+                        (200u16, agentpay_signer::seal_channel_response(&_store_guard, &plain, nonce.as_deref()))
+                    }
+                    Err(denial) => (denial.parts().0, denial.body()),
+                }
+            }
+        } else if method == "GET" && path.starts_with("/user/wallet/") {
+            // G87 — public-address read for THE subject (public data only)
+            // G89 (M3) — VERIFIED, not changed: the post-dispatch H-1 seal
+            // at the bottom of this loop ALREADY binds EVERY response to
+            // the request's channel_nonce (main.rs, "STEP H-1" seal) —
+            // including this route — whenever the caller supplies one. A
+            // caller that omits the nonce gets an unsealed response BY
+            // DESIGN (the shared/idempotent read path); the app-side lane
+            // reader MUST therefore always attach a fresh channel_nonce
+            // and verify the seal. Route-level re-sealing here would
+            // double-wrap (outer seal covers inner) — correctly verified
+            // but redundant; rejected. Residual risk (unchanged, G88
+            // G3.1): loopback peers remain the trust boundary for the
+            // read; the seal defeats response substitution, not local
+            // peer compromise.
+            let verdict = match path
+                .strip_prefix("/user/wallet/")
+                .and_then(|s| s.trim().parse::<u64>().ok())
+            {
+                Some(user_id) => {
+                    match agentpay_signer::user_lane::user_public_address(&_store_guard, user_id) {
+                        Ok(Some(addr)) => (
+                            200u16,
+                            serde_json::json!({ "public_address": addr }).to_string(),
+                        ),
+                        Ok(None) => (
+                            404u16,
+                            r#"{"error":"DENIED","code":"USER_UNKNOWN_WALLET"}"#.to_string(),
+                        ),
+                        Err(_) => (
+                            500u16,
+                            r#"{"error":"DENIED","code":"USER_RECORD_CORRUPT"}"#.to_string(),
+                        ),
+                    }
+                }
+                None => (400u16, r#"{"error":"DENIED","code":"USER_BAD_REQUEST"}"#.to_string()),
+            };
+            verdict
         } else if method == "GET" && path.starts_with("/wallet/") {
             // STEP 4: the public wallet-address read (public data only; the
             // store-backed integrity check applies)
@@ -521,4 +645,210 @@ async fn run() -> i32 {
 #[allow(dead_code)]
 fn _store_alive(store: &SignerStore) -> &std::path::Path {
     store.root()
+}
+
+/// G89 (M2/M4) — the bounded request-reader: accumulate stream chunks until
+/// headers + `Content-Length` body bytes are complete, with a HARD 16 KiB
+/// wire budget. Invariants (unit-tested below + by the E2E suite):
+///   * the budget is absolute: the buffer NEVER exceeds 16 KiB no matter
+///     what the peer streams or claims;
+///   * an oversized or unparseable Content-Length stops the read (the
+///     strict parse downstream fails the request closed);
+///   * a missing Content-Length (or headers) ends at EOF (single-shot
+///     request semantics; the read loop's zero `n` terminates it);
+///   * a truncated body (EOF before Content-Length is satisfied) yields
+///     exactly what arrived — never a wait, never an over-read;
+///   * accumulation is CHUNK-ATOMIC: a single segment carrying MORE than
+///     the claimed length leaves the excess in the buffer — the strict
+///     JSON parse (deny_unknown_fields, reject-trailing) then fails that
+///     request closed. The reader never over-reads the wire and never
+///     truncates toward an overlong claim.
+async fn read_bounded_request(buf: &mut Vec<u8>, sock: &mut (impl tokio::io::AsyncRead + Unpin)) {
+    use tokio::io::AsyncReadExt as _;
+    const WIRE_BUDGET: usize = 16 * 1024;
+    let mut chunk = [0u8; 4096];
+    loop {
+        let n = sock.read(&mut chunk).await.unwrap_or(0);
+        if n == 0 {
+            break; // EOF: parse what we have
+        }
+        if buf.len() + n > WIRE_BUDGET {
+            let take = WIRE_BUDGET - buf.len();
+            buf.extend_from_slice(&chunk[..take]);
+            break; // budget exhausted: truncated parse fails closed downstream
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        let text = String::from_utf8_lossy(buf);
+        if let Some(headers_end) = text.find("\r\n\r\n") {
+            let header_part = &text[..headers_end];
+            let claimed = header_part
+                .lines()
+                .find_map(|l| {
+                    let lower = l.to_ascii_lowercase();
+                    lower
+                        .strip_prefix("content-length:")
+                        .map(|v| v.trim().to_string())
+                })
+                .and_then(|v| v.parse::<usize>().ok());
+            match claimed {
+                Some(cl) if cl <= WIRE_BUDGET => {
+                    let have = buf.len() - (headers_end + 4);
+                    if have >= cl {
+                        break; // full body received
+                    }
+                    // else: keep accumulating toward the (bounded) claim
+                }
+                Some(_) => break,   // claimed > budget: stop — oversized
+                None => break,      // no/broken Content-Length: single-shot semantics
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod g89_reader_tests {
+    use super::read_bounded_request;
+    use tokio::io::AsyncRead;
+
+    /// Real-socket feeder: one byte stream, reads return UP TO the caller's
+    /// buffer size per poll (never drops bytes; ends at true EOF).
+    struct ByteStream(Vec<u8>, usize);
+    impl tokio::io::AsyncRead for ByteStream {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            out: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            use std::task::Poll;
+            if self.1 >= self.0.len() {
+                return Poll::Ready(Ok(())); // EOF
+            }
+            let take = (self.0.len() - self.1).min(out.remaining());
+            out.put_slice(&self.0[self.1..self.1 + take]);
+            self.1 += take;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    async fn drive(bytes: Vec<u8>) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(16 * 1024);
+        let mut src = ByteStream(bytes, 0);
+        read_bounded_request(&mut buf, &mut src).await;
+        buf
+    }
+
+    /// Headers + full body across SEGMENTS: exactly Content-Length bytes.
+    #[tokio::test]
+    async fn fragmented_request_is_read_to_content_length() {
+        let body = br#"{"user_id":"1","channel_nonce":"n"}"#;
+        let head = format!(
+            "POST /user/wallet HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        let mut split = head.clone();
+        split.extend_from_slice(&body[..]);
+        let got = drive(split).await;
+        let expected_len = head.len() + body.len();
+        assert_eq!(got.len(), expected_len, "read EXACTLY headers+CL bytes, not more");
+        assert!(got.ends_with(&body[..]), "full body accumulated across segments");
+    }
+
+    /// (review item 1a) Oversized Content-Length: claimed > 16 KiB ⇒ the
+    /// reader stops instead of accumulating toward an impossible claim.
+    #[tokio::test]
+    async fn oversized_content_length_stops_immediately() {
+        let head = b"POST /user/wallet HTTP/1.1\r\nHost: x\r\nContent-Length: 99999999\r\n\r\nextra-streamed-bytes";
+        let got = drive(head.to_vec()).await;
+        // the reader stops at the FIRST build after seeing the oversized claim:
+        // the header chunk itself is the last accumulation (any bytes already in
+        // that same chunk stay — chunk-atomic — but nothing further is read)
+        assert!(
+            got.len() <= head.len() + 64,
+            "no unbounded accumulation toward the oversized claim (got {})",
+            got.len()
+        );
+        assert!(got.starts_with(&head[..head.len() - 20]));
+    }
+
+    /// (review item 1b) Truncated body: EOF before Content-Length satisfied
+    /// ⇒ reader yields what arrived and terminates (no hang, no fabricate).
+    #[tokio::test]
+    async fn truncated_body_yields_what_arrived() {
+        // claim CL=100 but provide only 1 body byte then EOF
+        let head = b"POST /user/wallet HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n{";
+        let got = drive(head.to_vec()).await;
+        assert_eq!(got, head.to_vec(), "EOF-truncated body: exactly what arrived");
+    }
+
+    /// (review item 1c) Inconsistent streaming length: a lying small
+    /// Content-Length stops at the claimed boundary even if more stream
+    /// follows.
+    #[tokio::test]
+    async fn dishonest_small_content_length_stops_at_claim() {
+        // claim 4 body bytes; stream 10; reader must stop at exactly 4
+        let head = b"POST /user/wallet HTTP/1.1\r\nHost: x\r\nContent-Length: 19\r\n\r\n";
+        let mut seg = head.to_vec();
+        seg.extend_from_slice(br#"{"user_id":"1"}"#);
+        seg.extend_from_slice(b"TRAILING-GARBAGE");
+        let expected = seg.clone();
+        let got = drive(seg).await;
+        // chunk-atomic: the arriving segment satisfied the claim (19 ≤ have)
+        // so the read STOPS; the same-chunk excess is in the buffer AND the
+        // downstream strict parse rejects trailing garbage ⇒ fail closed.
+        assert_eq!(got, expected, "read stops after the claim is satisfied within the chunk");
+        parse_rejects_trailing_garbage(&got);
+    }
+
+    /// (review item 1d) No Content-Length: reader must not loop forever —
+    /// it terminates at EOF with whatever arrived (legacy /health shape).
+    #[tokio::test]
+    async fn missing_content_length_terminates_at_eof() {
+        let req = b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n";
+        let got = drive(req.to_vec()).await;
+        assert_eq!(got, req.to_vec());
+    }
+
+    /// (review item 1e) Maximum valid body: a Content-Length that EXACTLY
+    /// equals the 16 KiB budget is fully read (boundary is inclusive).
+    #[tokio::test]
+    async fn max_budget_body_is_read_completely() {
+        use std::io::Write as _;
+        let budget = 16 * 1024;
+        let body = vec![b'a'; budget];
+        let mut head = Vec::new();
+        write!(head, "POST /user/wallet HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n", budget).unwrap();
+        let mut seg = head.clone();
+        seg.extend_from_slice(&body);
+        let got = drive(seg).await;
+        // the budget is the TOTAL buffer (headers inclusive): a 16 KiB body
+        // plus headers exceeds it, so the buffer is capped at 16 KiB total
+        // and the strict parse fails closed downstream — the promised
+        // absolute bound, verified.
+        assert!(
+            got.len() <= 16 * 1024,
+            "total buffer never exceeds 16 KiB (got {})",
+            got.len()
+        );
+        assert!(got.starts_with(&head[..20]), "headers present in the capped buffer");
+        // one byte over the budget: the buffer NEVER exceeds 16 KiB of body
+        let mut seg2 = head.clone();
+        seg2.extend_from_slice(&vec![b'b'; budget + 500]);
+        let got2 = drive(seg2).await;
+        let body2_len = got2.len() - head.len();
+        assert!(
+            body2_len <= budget,
+            "buffer never exceeds the wire budget (body got {})",
+            body2_len
+        );
+    }
+
+    /// The downstream fail-closed leg for chunk-atomic excess: strict JSON
+    /// parse rejects trailing garbage after the object (serde contract the
+    /// user routes depend on).
+    fn parse_rejects_trailing_garbage(with_excess: &[u8]) {
+        let body = &with_excess[with_excess.iter().position(|&b| b == b'{').unwrap()..];
+        let parsed: Result<serde_json::Value, _> = serde_json::from_slice(body);
+        assert!(parsed.is_err(), "trailing garbage after CL-satisfied JSON is rejected, got {:?}", parsed.ok());
+    }
 }

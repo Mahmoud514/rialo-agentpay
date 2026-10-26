@@ -50,6 +50,17 @@ mod leaderboard;
 #[path = "server/tasks.rs"]
 mod tasks;
 
+/// g1150 — safe wallet-file publication for the legacy v1 wallet lane.
+/// Complete temp + fsync + hard_link; final paths are never replaced.
+#[path = "server/wallet_file_safety.rs"]
+mod wallet_file_safety;
+
+/// Stage 3 — V8 wallet-provisioning outbox (design-only until explicitly wired).
+/// NOT referenced by any route, scheduler, or payment path.
+#[path = "server/wallet_provisioning.rs"]
+#[allow(dead_code)]
+mod wallet_provisioning;
+
 /// PHASE 7 — AGENT STATS · PART 2.1: the read-only CORE + data readers
 /// (typed internal projections over `artifact/agents` +
 /// `artifact/agent_payment_intents`, via the authoritative readers).
@@ -423,7 +434,7 @@ fn wallet_integrity_check(user_id: u64) -> Result<(), String> {
     });
     match rt.block_on(crate::pg_store::registry_get_user_wallet(user_id)) {
         Ok(Some(_)) => {
-            if wallet_file(user_id).exists() {
+            if wallet_file_is_regular(&wallet_file(user_id)) {
                 Ok(())
             } else {
                 Err("WALLET_FILE_MISSING: registered wallet file is missing; operator recovery required".into())
@@ -527,21 +538,53 @@ fn recovery_registry_runtime() -> &'static tokio::runtime::Runtime {
 }
 
 fn mint_wallet_file(user_id: u64) -> Result<Keypair, String> {
+    // The recovery path is explicit, but it must still serialize with the
+    // normal loader and must never replace a file that appeared meanwhile.
+    let _guard = wallet_file_safety::lock_user(user_id);
     let path = wallet_file(user_id);
     if path.exists() {
         return Err("WALLET_FILE_EXISTS: refusing to overwrite an existing wallet file".into());
+    }
+    let recovery_operation_id = v1_wallet_recovery_operation_id(user_id);
+    let root = wallet_operation_root();
+    match wallet_file_safety::read_operation(&root, user_id, &recovery_operation_id) {
+        wallet_file_safety::WalletOperationState::Completed { .. } => {
+            return Err(
+                "WALLET_RECOVERY_ALREADY_COMPLETED: operator required; refusing a replacement"
+                    .into(),
+            )
+        }
+        wallet_file_safety::WalletOperationState::InProgress => {}
+        wallet_file_safety::WalletOperationState::Corrupt => {
+            return Err("WALLET_OPERATION_JOURNAL_CORRUPT: recovery needs operator".into())
+        }
+        wallet_file_safety::WalletOperationState::Absent => {
+            match wallet_file_safety::begin_operation(
+                &root,
+                user_id,
+                &recovery_operation_id,
+            )
+            .map_err(|_| "WALLET_OPERATION_JOURNAL_UNAVAILABLE".to_string())?
+            {
+                wallet_file_safety::WalletOperationState::InProgress => {}
+                _ => {
+                    return Err(
+                        "WALLET_OPERATION_JOURNAL_CORRUPT: recovery needs operator".into(),
+                    )
+                }
+            }
+        }
     }
     let mut seed = [0u8; 32];
     getrandom::getrandom(&mut seed).map_err(|e| format!("WALLET_RNG_FAILED: {e}"))?;
     let keypair = rialo_s_keypair::keypair_from_seed(&seed)
         .map_err(|e| format!("WALLET_KEYPAIR_FAILED: {e}"))?;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|e| format!("WALLET_CREATE_FAILED: {e}"))?;
-    rialo_s_keypair::write_keypair(&keypair, &mut file)
+    seed.fill(0);
+    let mut bytes = Vec::new();
+    rialo_s_keypair::write_keypair(&keypair, &mut bytes)
         .map_err(|e| format!("WALLET_WRITE_FAILED: {e}"))?;
+    wallet_file_safety::write_new_file_no_replace(&path, &bytes, 0o600)
+        .map_err(|_| "WALLET_CREATE_FAILED: could not publish wallet file".to_string())?;
     harden_wallet_permissions(&path);
     Ok(keypair)
 }
@@ -645,7 +688,20 @@ async fn recover_wallet(
     })
     .await;
     match rotated {
-        Ok(Ok(())) => Redirect::temporary("/auth/github").into_response(),
+        Ok(Ok(())) => {
+            // The public result is committed only after the registry row was
+            // replaced. A failure here leaves the operation InProgress; the
+            // next strict load completes it from the same file (never mints).
+            if let Ok(bytes) = std::fs::read(wallet_file(user_id)) {
+                let _ = complete_wallet_operation_for(
+                    user_id,
+                    &v1_wallet_recovery_operation_id(user_id),
+                    &keypair,
+                    &bytes,
+                );
+            }
+            Redirect::temporary("/auth/github").into_response()
+        }
         Ok(Err(e)) => {
             let _ = std::fs::remove_file(wallet_file(user_id));
             wallet_recovery_error_page(&format!(
@@ -664,75 +720,254 @@ async fn recover_wallet(
     }
 }
 
-/// G21.12 — strict load/mint used by money paths in PG mode.
-/// PG is the source of truth: registered-but-file-missing refuses (no
-/// replacement). First mint (no file, no registry row) registers pubkey.
-fn load_wallet_strict(user_id: u64) -> Result<Keypair, String> {
-    wallet_integrity_check(user_id)?;
-    let path = wallet_file(user_id);
-
-    if path.exists() {
-        harden_wallet_permissions(&path);
-        let mut file =
-            std::fs::File::open(&path).map_err(|e| format!("WALLET_UNREADABLE: open: {e}"))?;
-        let keypair = rialo_s_keypair::read_keypair(&mut file)
-            .map_err(|e| format!("WALLET_UNREADABLE: parse: {e}"))?;
-        // Identity binding: derived pubkey must equal the registered one.
-        static REG_RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
-        let rt = REG_RT.get_or_init(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .enable_all()
-                .build()
-                .expect("verify runtime")
-        });
-        let reg_row = rt
-            .block_on(crate::pg_store::registry_get_user_wallet(user_id))
-            .map_err(|e| format!("WALLET_REGISTRY_DOWN: {e:?}"))?;
-        let reg = if let Some(reg) = reg_row {
-            Some(reg)
-        } else {
-            None
-        };
-        if let Some(reg) = reg {
-            let file_pubkey = keypair.pubkey().to_string();
-            if file_pubkey != reg {
-                return Err(
-                    "WALLET_IDENTITY_MISMATCH: file pubkey does not match the registered pubkey"
-                        .into(),
-                );
-            }
-        }
-        return Ok(keypair);
-    }
-
-    // Mint new (first-time): FS create + PG register. On register failure,
-    // file is KEPT (durable identity) and request fails; next attempt
-    // re-registers the same pubkey idempotently.
-    let mut seed = [0u8; 32];
-    getrandom::getrandom(&mut seed).expect("failed to generate secure wallet seed");
-    let keypair = rialo_s_keypair::keypair_from_seed(&seed)
-        .expect("failed to create keypair from wallet seed");
-    let mut file = std::fs::File::create(&path).expect("failed to create wallet file");
-    rialo_s_keypair::write_keypair(&keypair, &mut file).expect("failed to write wallet keypair");
-    harden_wallet_permissions(&path);
-
-    static REG_RT2: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
-    let rt = REG_RT2.get_or_init(|| {
+/// Read a wallet keypair and bind it to the PG registry. A file that exists
+/// without a registry row is the crash window after first mint; register the
+/// SAME pubkey idempotently, never mint a second wallet.
+fn bind_wallet_registry(user_id: u64, keypair: &Keypair) -> Result<(), String> {
+    static REG_RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let rt = REG_RT.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
             .build()
-            .expect("register runtime")
+            .expect("wallet registry runtime")
     });
     let pubkey = keypair.pubkey().to_string();
-    let now = agents::now_unix();
-    if let Err(e) = rt.block_on(crate::pg_store::registry_register_user_wallet(
-        user_id, &pubkey, now,
-    )) {
-        eprintln!("wallet register failed for user {user_id} (file kept for retry): {e:?}");
-        return Err(format!("WALLET_REGISTRY_DOWN: {e:?}"));
+    let reg = rt
+        .block_on(crate::pg_store::registry_get_user_wallet(user_id))
+        .map_err(|e| format!("WALLET_REGISTRY_DOWN: {e:?}"))?;
+    match reg {
+        Some(reg) if reg == pubkey => Ok(()),
+        Some(_) => Err(
+            "WALLET_IDENTITY_MISMATCH: file pubkey does not match the registered pubkey"
+                .into(),
+        ),
+        None => {
+            let now = agents::now_unix();
+            rt.block_on(crate::pg_store::registry_register_user_wallet(
+                user_id, &pubkey, now,
+            ))
+            .map_err(|e| format!("WALLET_REGISTRY_DOWN: {e:?}"))
+        }
     }
+}
+
+fn read_wallet_keypair(path: &Path) -> Result<Keypair, String> {
+    read_wallet_bytes_and_keypair(path).map(|(_, keypair)| keypair)
+}
+
+fn wallet_file_is_regular(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_file())
+        .unwrap_or(false)
+}
+
+fn read_wallet_bytes_and_keypair(path: &Path) -> Result<(Vec<u8>, Keypair), String> {
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|e| format!("WALLET_UNREADABLE: stat: {e}"))?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err("WALLET_UNREADABLE: wallet path is not a regular file".into());
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("WALLET_UNREADABLE: open: {e}"))?;
+    // Reject a path swapped to a symlink between the stat and the read. The
+    // final no-replace writer and journal still fail closed on ambiguity.
+    let after =
+        std::fs::symlink_metadata(path).map_err(|e| format!("WALLET_UNREADABLE: restat: {e}"))?;
+    if after.file_type().is_symlink() || !after.file_type().is_file() {
+        return Err("WALLET_UNREADABLE: wallet path changed during read".into());
+    }
+    harden_wallet_permissions(path);
+    let mut cursor = std::io::Cursor::new(&bytes);
+    let keypair = rialo_s_keypair::read_keypair(&mut cursor)
+        .map_err(|e| format!("WALLET_UNREADABLE: parse: {e}"))?;
+    Ok((bytes, keypair))
+}
+
+fn v1_wallet_operation_id(user_id: u64) -> String {
+    format!("v1-user-wallet:{user_id}")
+}
+
+fn v1_wallet_recovery_operation_id(user_id: u64) -> String {
+    format!("v1-user-wallet-recovery:{user_id}")
+}
+
+fn wallet_operation_root() -> PathBuf {
+    Path::new("artifact").to_path_buf()
+}
+
+fn complete_wallet_operation_for(
+    user_id: u64,
+    operation_id: &str,
+    keypair: &Keypair,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let public_address = keypair.pubkey().to_string();
+    let digest = wallet_file_safety::record_digest(bytes);
+    wallet_file_safety::complete_operation(
+        &wallet_operation_root(),
+        user_id,
+        operation_id,
+        &public_address,
+        &digest,
+    )
+    .map_err(|_| "WALLET_OPERATION_JOURNAL_UNAVAILABLE".to_string())
+}
+
+fn complete_wallet_file_operation(
+    user_id: u64,
+    _path: &Path,
+    keypair: &Keypair,
+    bytes: &[u8],
+) -> Result<(), String> {
+    complete_wallet_operation_for(user_id, &v1_wallet_operation_id(user_id), keypair, bytes)
+}
+
+fn load_wallet_strict(user_id: u64) -> Result<Keypair, String> {
+    // Per-user process-wide serialization; cross-process races are closed by
+    // the no-replace final writer and the durable public operation journal.
+    let _guard = wallet_file_safety::lock_user(user_id);
+    wallet_integrity_check(user_id)?;
+    let path = wallet_file(user_id);
+    let operation_id = v1_wallet_operation_id(user_id);
+    let recovery_operation_id = v1_wallet_recovery_operation_id(user_id);
+    let root = wallet_operation_root();
+
+    // An explicit recovery creates a new wallet for an account whose old
+    // wallet is gone. Its result is checked first; the old normal operation
+    // journal remains immutable and must not mask the recovered file.
+    match wallet_file_safety::read_operation(&root, user_id, &recovery_operation_id) {
+        wallet_file_safety::WalletOperationState::Completed {
+            public_address,
+            record_sha256,
+        } => {
+            if !path.exists() {
+                return Err(
+                    "WALLET_FILE_MISSING: completed recovery has no wallet file; operator required"
+                        .into(),
+                );
+            }
+            let (bytes, keypair) = read_wallet_bytes_and_keypair(&path)?;
+            if keypair.pubkey().to_string() != public_address
+                || wallet_file_safety::record_digest(&bytes) != record_sha256
+            {
+                return Err(
+                    "WALLET_IDENTITY_MISMATCH: recovered wallet does not match its journal".into(),
+                );
+            }
+            bind_wallet_registry(user_id, &keypair)?;
+            return Ok(keypair);
+        }
+        wallet_file_safety::WalletOperationState::InProgress => {
+            if !path.exists() {
+                return Err(
+                    "WALLET_PROVISIONING_INCOMPLETE: recovery started without a file; operator required"
+                        .into(),
+                );
+            }
+            let (bytes, keypair) = read_wallet_bytes_and_keypair(&path)?;
+            complete_wallet_operation_for(user_id, &recovery_operation_id, &keypair, &bytes)?;
+            bind_wallet_registry(user_id, &keypair)?;
+            return Ok(keypair);
+        }
+        wallet_file_safety::WalletOperationState::Corrupt => {
+            return Err("WALLET_OPERATION_JOURNAL_CORRUPT: recovery journal needs operator".into())
+        }
+        wallet_file_safety::WalletOperationState::Absent => {}
+    }
+
+    match wallet_file_safety::read_operation(&root, user_id, &operation_id) {
+        wallet_file_safety::WalletOperationState::Completed {
+            public_address,
+            record_sha256,
+        } => {
+            if !path.exists() {
+                return Err(
+                    "WALLET_FILE_MISSING: completed operation has no wallet file; operator recovery required"
+                        .into(),
+                );
+            }
+            let (bytes, keypair) = read_wallet_bytes_and_keypair(&path)?;
+            if keypair.pubkey().to_string() != public_address
+                || wallet_file_safety::record_digest(&bytes) != record_sha256
+            {
+                return Err(
+                    "WALLET_IDENTITY_MISMATCH: wallet file does not match the completed operation"
+                        .into(),
+                );
+            }
+            bind_wallet_registry(user_id, &keypair)?;
+            return Ok(keypair);
+        }
+        wallet_file_safety::WalletOperationState::InProgress => {
+            if !path.exists() {
+                return Err(
+                    "WALLET_PROVISIONING_INCOMPLETE: operation started but no wallet file exists; operator recovery required"
+                        .into(),
+                );
+            }
+            let (bytes, keypair) = read_wallet_bytes_and_keypair(&path)?;
+            complete_wallet_file_operation(user_id, &path, &keypair, &bytes)?;
+            bind_wallet_registry(user_id, &keypair)?;
+            return Ok(keypair);
+        }
+        wallet_file_safety::WalletOperationState::Corrupt => {
+            return Err(
+                "WALLET_OPERATION_JOURNAL_CORRUPT: operator recovery required".into(),
+            )
+        }
+        wallet_file_safety::WalletOperationState::Absent => {}
+    }
+
+    if path.exists() {
+        // Legacy/imported file with no journal: bind and publish the result
+        // instead of minting a second wallet.
+        let (bytes, keypair) = read_wallet_bytes_and_keypair(&path)?;
+        complete_wallet_file_operation(user_id, &path, &keypair, &bytes)?;
+        bind_wallet_registry(user_id, &keypair)?;
+        return Ok(keypair);
+    }
+
+    match wallet_file_safety::begin_operation(&root, user_id, &operation_id)
+        .map_err(|_| "WALLET_OPERATION_JOURNAL_UNAVAILABLE".to_string())?
+    {
+        wallet_file_safety::WalletOperationState::InProgress => {}
+        wallet_file_safety::WalletOperationState::Completed { .. } => {
+            return Err(
+                "WALLET_PROVISIONING_INCOMPLETE: operation completed concurrently; retry read"
+                    .into(),
+            )
+        }
+        _ => {
+            return Err(
+                "WALLET_OPERATION_JOURNAL_CORRUPT: operator recovery required".into(),
+            )
+        }
+    }
+
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed).expect("failed to generate secure wallet seed");
+    let candidate = rialo_s_keypair::keypair_from_seed(&seed)
+        .expect("failed to create keypair from wallet seed");
+    seed.fill(0);
+    let mut bytes = Vec::new();
+    rialo_s_keypair::write_keypair(&candidate, &mut bytes)
+        .expect("failed to serialize wallet keypair");
+    let keypair = match wallet_file_safety::write_new_file_no_replace(&path, &bytes, 0o600) {
+        Ok(()) => {
+            harden_wallet_permissions(&path);
+            candidate
+        }
+        Err(wallet_file_safety::SafetyError::AlreadyExists) => {
+            let (winner_bytes, winner) = read_wallet_bytes_and_keypair(&path)?;
+            complete_wallet_file_operation(user_id, &path, &winner, &winner_bytes)?;
+            bind_wallet_registry(user_id, &winner)?;
+            return Ok(winner);
+        }
+        Err(_) => return Err("WALLET_STORE_UNAVAILABLE: failed to persist wallet file".into()),
+    };
+
+    complete_wallet_file_operation(user_id, &path, &keypair, &bytes)?;
+    bind_wallet_registry(user_id, &keypair)?;
     Ok(keypair)
 }
 
@@ -747,6 +982,99 @@ fn strict_wallet_load_or_mint(user_id: u64) -> Result<Keypair, String> {
     } else {
         Ok(load_or_create_wallet(user_id))
     }
+}
+
+// V8 worker glue lives in the server binary (not in the reusable
+// wallet_provisioning module) so the module can also be compiled by the
+// pg_integration test binary without a server parent module.
+struct V8LocalSigner;
+
+impl wallet_provisioning::ProvisionSigner for V8LocalSigner {
+    fn ensure_wallet(&self, user_id: u64) -> Result<(), wallet_provisioning::SignerError> {
+        match strict_wallet_load_or_mint(user_id) {
+            Ok(_) => Ok(()),
+            Err(code) => {
+                // Never surface file paths or raw signer text in the outbox.
+                if code.starts_with("WALLET_FILE_MISSING")
+                    || code.starts_with("WALLET_IDENTITY_MISMATCH")
+                    || code.starts_with("WALLET_UNREADABLE")
+                    || code.starts_with("WALLET_OPERATION_JOURNAL_CORRUPT")
+                    || code.starts_with("WALLET_PROVISIONING_INCOMPLETE")
+                {
+                    Err(wallet_provisioning::SignerError::wallet_missing(
+                        "WALLET_MISSING_OR_CORRUPT",
+                    ))
+                } else if code.starts_with("WALLET_REGISTRY_DOWN")
+                    || code.starts_with("WALLET_STORE_UNAVAILABLE")
+                    || code.starts_with("WALLET_OPERATION_JOURNAL_UNAVAILABLE")
+                {
+                    Err(wallet_provisioning::SignerError::transient(
+                        "SIGNER_UNAVAILABLE",
+                    ))
+                } else {
+                    Err(wallet_provisioning::SignerError::permanent(
+                        "SIGNER_REJECTED",
+                    ))
+                }
+            }
+        }
+    }
+}
+
+fn run_v8_worker(
+    client: std::sync::Arc<tokio_postgres::Client>,
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    worker_id: String,
+) {
+    let store = wallet_provisioning::PgProvisionStore::new(client, runtime);
+    let provisioner = wallet_provisioning::Provisioner::new(V8LocalSigner, store);
+    loop {
+        let now = agents::now_unix();
+        let wait = match provisioner.process_one(&worker_id, now) {
+            Ok(wallet_provisioning::Processed::NoWork) => std::time::Duration::from_secs(1),
+            Ok(_) => std::time::Duration::from_millis(100),
+            Err(_) => std::time::Duration::from_secs(5),
+        };
+        std::thread::sleep(wait);
+    }
+}
+
+/// Opt-in V8 worker. Separate client/runtime so it can never borrow the
+/// request runtime (the g1152 nested-runtime failure).
+fn start_v8_worker_from_env() {
+    if std::env::var("AGENTPAY_WALLET_PROVISIONING").as_deref() != Ok("1") {
+        return;
+    }
+    if !crate::pg_store::pg_is_authoritative() {
+        eprintln!("[v8] worker requested but storage mode is not PostgreSQL; disabled");
+        return;
+    }
+    let Some(url) = crate::pg_store::database_url() else {
+        eprintln!("[v8] worker requested without DATABASE_URL; disabled");
+        return;
+    };
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => std::sync::Arc::new(rt),
+        Err(_) => {
+            eprintln!("[v8] worker runtime initialization failed; disabled");
+            return;
+        }
+    };
+    let client = match runtime.block_on(crate::pg_store::pg_connect(&url)) {
+        Ok(client) => std::sync::Arc::new(client),
+        Err(_) => {
+            eprintln!("[v8] worker database connection failed; disabled");
+            return;
+        }
+    };
+    let worker_id = format!("server-{}-{}", std::process::id(), agents::now_unix());
+    let _ = std::thread::Builder::new()
+        .name("v8-wallet-provisioner".into())
+        .spawn(move || run_v8_worker(client, runtime, worker_id));
 }
 
 fn wallet_file(user_id: u64) -> PathBuf {
@@ -770,29 +1098,95 @@ fn harden_wallet_permissions(path: &Path) {
 }
 
 fn load_or_create_wallet(user_id: u64) -> Keypair {
+    // The legacy FS lane gets the same per-user serialization, no-replace
+    // publication, and public operation journal as the strict lane.
+    let _guard = wallet_file_safety::lock_user(user_id);
     let path = wallet_file(user_id);
+    let operation_id = v1_wallet_operation_id(user_id);
+    let root = wallet_operation_root();
+
+    match wallet_file_safety::read_operation(&root, user_id, &operation_id) {
+        wallet_file_safety::WalletOperationState::Completed {
+            public_address,
+            record_sha256,
+        } => {
+            let (bytes, keypair) =
+                read_wallet_bytes_and_keypair(&path).expect("completed wallet file is missing");
+            assert_eq!(keypair.pubkey().to_string(), public_address);
+            assert_eq!(wallet_file_safety::record_digest(&bytes), record_sha256);
+            return keypair;
+        }
+        wallet_file_safety::WalletOperationState::InProgress => {
+            let (bytes, keypair) = read_wallet_bytes_and_keypair(&path)
+                .expect("wallet operation started but no wallet file exists");
+            complete_wallet_file_operation(user_id, &path, &keypair, &bytes)
+                .expect("wallet operation journal must be writable");
+            return keypair;
+        }
+        wallet_file_safety::WalletOperationState::Corrupt => {
+            panic!("WALLET_OPERATION_JOURNAL_CORRUPT: explicit recovery is required")
+        }
+        wallet_file_safety::WalletOperationState::Absent => {}
+    }
 
     if path.exists() {
-        harden_wallet_permissions(&path);
+        let (bytes, keypair) = read_wallet_bytes_and_keypair(&path)
+            .expect("failed to read existing wallet keypair");
+        complete_wallet_file_operation(user_id, &path, &keypair, &bytes)
+            .expect("wallet operation journal must be writable");
+        return keypair;
+    }
 
-        let mut file = std::fs::File::open(&path).expect("failed to open wallet file");
+    // In PG-authoritative mode a registered-but-missing wallet is evidence of
+    // a prior identity. Never mint a replacement for it.
+    if crate::pg_store::pg_is_authoritative() {
+        static REG_RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+        let rt = REG_RT.get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("wallet registry runtime")
+        });
+        let registered = rt
+            .block_on(crate::pg_store::registry_get_user_wallet(user_id))
+            .expect("wallet registry must be reachable in PG-authoritative mode");
+        if registered.is_some() {
+            panic!("WALLET_FILE_MISSING: a registered wallet has no file; explicit recovery is required");
+        }
+    }
 
-        return rialo_s_keypair::read_keypair(&mut file).expect("failed to read wallet keypair");
+    match wallet_file_safety::begin_operation(&root, user_id, &operation_id)
+        .expect("wallet operation journal must be writable")
+    {
+        wallet_file_safety::WalletOperationState::InProgress => {}
+        _ => panic!("WALLET_OPERATION_JOURNAL_CORRUPT: explicit recovery is required"),
     }
 
     let mut seed = [0u8; 32];
-
     getrandom::getrandom(&mut seed).expect("failed to generate secure wallet seed");
-
     let keypair = rialo_s_keypair::keypair_from_seed(&seed)
         .expect("failed to create keypair from wallet seed");
-
-    let mut file = std::fs::File::create(&path).expect("failed to create wallet file");
-
-    rialo_s_keypair::write_keypair(&keypair, &mut file).expect("failed to write wallet keypair");
-
-    harden_wallet_permissions(&path);
-
+    seed.fill(0);
+    let mut bytes = Vec::new();
+    rialo_s_keypair::write_keypair(&keypair, &mut bytes)
+        .expect("failed to serialize wallet keypair");
+    let keypair = match wallet_file_safety::write_new_file_no_replace(&path, &bytes, 0o600) {
+        Ok(()) => {
+            harden_wallet_permissions(&path);
+            keypair
+        }
+        Err(wallet_file_safety::SafetyError::AlreadyExists) => {
+            let (winner_bytes, winner) =
+                read_wallet_bytes_and_keypair(&path).expect("failed to read winning wallet keypair");
+            complete_wallet_file_operation(user_id, &path, &winner, &winner_bytes)
+                .expect("wallet operation journal must be writable");
+            return winner;
+        }
+        Err(_) => panic!("failed to create wallet file"),
+    };
+    complete_wallet_file_operation(user_id, &path, &keypair, &bytes)
+        .expect("wallet operation journal must be writable");
     keypair
 }
 
@@ -1156,6 +1550,11 @@ async fn main() {
         }
         crate::pg_store::bootstrap_thread(url);
         crate::pg_store::wait_ready();
+
+        // V8 is opt-in and runs outside the request runtime. The worker stores
+        // only public state in the outbox; key material never leaves the
+        // signer/v1 wallet boundary.
+        start_v8_worker_from_env();
     }
 
     let srv_handle = tokio::spawn(async move {
@@ -3520,5 +3919,31 @@ mod program_helpers_tests {
         ));
         assert!(!valid_rialo_address("has spaces"));
         assert!(!valid_rialo_address("short"));
+    }
+}
+
+#[cfg(test)]
+mod wallet_path_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn wallet_reader_refuses_symlink_and_non_regular_files() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!(
+            "g1155-wallet-symlink-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        std::fs::write(&target, b"not a wallet").unwrap();
+        let link = dir.join("link");
+        symlink(&target, &link).unwrap();
+        assert!(!wallet_file_is_regular(&link));
+        let error = read_wallet_bytes_and_keypair(&link).unwrap_err();
+        assert!(error.contains("not a regular file"), "{error}");
+        assert!(wallet_file_is_regular(&target));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

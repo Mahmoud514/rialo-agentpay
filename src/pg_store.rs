@@ -1485,6 +1485,11 @@ pub async fn sum_outstanding_commitments_pg(
 }
 
 /// Insert one session (login) — replaces the in-memory sessions HashMap.
+///
+/// `session_hash` is the lowercase SHA-256 of the raw cookie token, matching
+/// the Worker `sessionHash()` implementation byte-for-byte. The raw
+/// `session_id` is retained during the compatibility phase so existing Blitz
+/// sessions and old readers still work.
 pub async fn insert_session(
     client: &tokio_postgres::Client,
     session_id: &str,
@@ -1492,31 +1497,58 @@ pub async fn insert_session(
     login: &str,
     now: i64,
 ) -> Result<(), String> {
+    let hash = session_token_hash(session_id);
     client
         .execute(
-            "INSERT INTO sessions (session_id, user_id, login, created_at) VALUES ($1,$2,$3,$4) \
+            "INSERT INTO sessions (session_id, session_hash, user_id, login, created_at) \
+             VALUES ($1,$2,$3,$4,$5) \
              ON CONFLICT (session_id) DO NOTHING",
-            &[&session_id, &user_id, &login, &now],
+            &[&session_id, &hash, &user_id, &login, &now],
         )
         .await
         .map_err(|e| format!("insert_session: {e}"))?;
     Ok(())
 }
 
-/// Look up a session; expires_at IS NULL means non-expiring (compatibility
+/// Lowercase SHA-256 of the raw session token, matching Worker `sessionHash()`.
+/// This hashes the exact cookie value bytes, with no trimming or re-encoding.
+fn session_token_hash(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(token.as_bytes());
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+/// Look up a session; `expires_at IS NULL` means non-expiring (compatibility
 /// with the legacy in-memory map that had no expiry). NOTE: no TTL is
 /// configured anywhere yet — sessions persist until explicitly deleted
 /// (logout) or the row is removed manually.
+///
+/// Resolution rules:
+/// - a non-null `session_hash` must match the SHA-256 of the cookie token;
+/// - raw `session_id` is a fallback ONLY when `session_hash IS NULL`, which
+///   keeps existing pre-hash rows readable;
+/// - a row with a non-null hash that does not match is never resolved by
+///   falling back to its raw id;
+/// - expiry is checked in the same query.
 pub async fn get_session(
     client: &tokio_postgres::Client,
     session_id: &str,
     now: i64,
 ) -> Result<Option<(i64, String)>, String> {
+    let hash = session_token_hash(session_id);
     let rows = client
         .query(
             "SELECT user_id, login FROM sessions \
-             WHERE session_id = $1 AND (expires_at IS NULL OR expires_at > $2)",
-            &[&session_id, &now],
+             WHERE (session_hash = $1 OR (session_hash IS NULL AND session_id = $2)) \
+               AND (expires_at IS NULL OR expires_at > $3) \
+             ORDER BY (session_hash = $1) DESC \
+             LIMIT 1",
+            &[&hash, &session_id, &now],
         )
         .await
         .map_err(|e| format!("get_session: {e}"))?;
@@ -1526,12 +1558,20 @@ pub async fn get_session(
 }
 
 /// Delete one session (logout revocation) — authoritative across instances.
+/// Hash rows are revoked by their hash; legacy rows by raw id only when their
+/// hash is null. This mirrors the read-side fallback and never uses a raw id
+/// to revoke a hash-backed row.
 pub async fn delete_session(
     client: &tokio_postgres::Client,
     session_id: &str,
 ) -> Result<bool, String> {
+    let hash = session_token_hash(session_id);
     let n = client
-        .execute("DELETE FROM sessions WHERE session_id = $1", &[&session_id])
+        .execute(
+            "DELETE FROM sessions \
+             WHERE session_hash = $1 OR (session_hash IS NULL AND session_id = $2)",
+            &[&hash, &session_id],
+        )
         .await
         .map_err(|e| format!("delete_session: {e}"))?;
     Ok(n > 0)
@@ -4159,6 +4199,14 @@ mod pg_tests {
                     .batch_execute(SCHEMA_V4)
                     .await
                     .expect("schema v4 apply (once per process)");
+                // Test-only parity with the additive V7 auth schema. This is
+                // not a production migration and does not run at startup.
+                client
+                    .batch_execute(
+                        "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS session_hash TEXT;",
+                    )
+                    .await
+                    .expect("test-only session_hash column");
             });
         });
         // Truncate is safe to run every time (no catalog race).
@@ -4898,6 +4946,19 @@ mod pg_tests {
                 .await
                 .expect("get session");
             assert_eq!(got, Some((42, "alice".to_string())));
+            let stored_hash: String = client
+                .query_one(
+                    "SELECT session_hash FROM sessions WHERE session_id = 'sess-1'",
+                    &[],
+                )
+                .await
+                .expect("read stored session hash")
+                .get(0);
+            assert_eq!(
+                stored_hash,
+                super::session_token_hash("sess-1"),
+                "Blitz insert_session must persist the Worker-compatible hash"
+            );
             // …absent for a foreign id…
             let missing = super::get_session(&client, "sess-other", 2_000)
                 .await
@@ -4950,6 +5011,138 @@ mod pg_tests {
                 .await
                 .expect("get after expiry");
             assert_eq!(after, None, "expired session must fail closed");
+        });
+    }
+
+    #[test]
+    fn pg_session_sha256_vector_and_hash_lookup() {
+        let _pg_guard = pg_lock();
+        let rt = pg_test_runtime();
+        let client = pg_test_client();
+        fresh_schema(&client);
+        rt.block_on(async {
+            // This vector is the same lowercase SHA-256 produced by the
+            // Worker's sessionHash() for the exact cookie bytes.
+            assert_eq!(
+                super::session_token_hash("session-token"),
+                "c101e911469c969171040b50d70543313cf968fdef5bacc780776f8fb399ab36"
+            );
+
+            let hash = super::session_token_hash("worker-cookie-token");
+            client
+                .execute(
+                    "INSERT INTO sessions (session_id, session_hash, user_id, login, created_at) \
+                     VALUES ('worker-record-id', $1, 55, 'worker-user', 1000)",
+                    &[&hash],
+                )
+                .await
+                .expect("insert hash session");
+
+            let got = super::get_session(&client, "worker-cookie-token", 1_001)
+                .await
+                .expect("lookup hash session");
+            assert_eq!(got, Some((55, "worker-user".to_string())));
+
+            let deleted = super::delete_session(&client, "worker-cookie-token")
+                .await
+                .expect("delete hash session");
+            assert!(deleted, "hash session must be revocable by cookie token");
+            let after = super::get_session(&client, "worker-cookie-token", 1_001)
+                .await
+                .expect("lookup deleted hash session");
+            assert_eq!(after, None, "deleted hash session must not resolve");
+        });
+    }
+
+    #[test]
+    fn pg_session_raw_fallback_is_only_for_null_hash_rows() {
+        let _pg_guard = pg_lock();
+        let rt = pg_test_runtime();
+        let client = pg_test_client();
+        fresh_schema(&client);
+        rt.block_on(async {
+            // Legacy pre-hash row: raw session_id remains readable.
+            client
+                .execute(
+                    "INSERT INTO sessions (session_id, user_id, login, created_at) \
+                     VALUES ('legacy-raw-token', 7, 'legacy', 1000)",
+                    &[],
+                )
+                .await
+                .expect("insert legacy session");
+            let legacy = super::get_session(&client, "legacy-raw-token", 1_001)
+                .await
+                .expect("lookup legacy session");
+            assert_eq!(legacy, Some((7, "legacy".to_string())));
+
+            // New row with a non-null hash: the raw id must NOT be accepted
+            // when the hash does not match. This is the authentication
+            // boundary that prevents a hash-backed row from silently
+            // degrading to raw lookup.
+            let wrong_hash = super::session_token_hash("different-token");
+            client
+                .execute(
+                    "INSERT INTO sessions (session_id, session_hash, user_id, login, created_at) \
+                     VALUES ('raw-but-hash-backed', $1, 8, 'must-not-resolve', 1000)",
+                    &[&wrong_hash],
+                )
+                .await
+                .expect("insert hash-backed conflicting row");
+            let conflict = super::get_session(&client, "raw-but-hash-backed", 1_001)
+                .await
+                .expect("lookup conflicting row");
+            assert_eq!(
+                conflict, None,
+                "a non-null session_hash must disable raw session_id fallback"
+            );
+        });
+    }
+
+    #[test]
+    fn pg_session_hash_expiry_and_cross_row_conflict() {
+        let _pg_guard = pg_lock();
+        let rt = pg_test_runtime();
+        let client = pg_test_client();
+        fresh_schema(&client);
+        rt.block_on(async {
+            let hash = super::session_token_hash("expiring-token");
+            client
+                .execute(
+                    "INSERT INTO sessions (session_id, session_hash, user_id, login, created_at, expires_at) \
+                     VALUES ('expiring-record', $1, 9, 'expiring', 1000, 2000)",
+                    &[&hash],
+                )
+                .await
+                .expect("insert expiring hash session");
+            let before = super::get_session(&client, "expiring-token", 1_999)
+                .await
+                .expect("lookup before expiry");
+            assert_eq!(before, Some((9, "expiring".to_string())));
+            let after = super::get_session(&client, "expiring-token", 2_000)
+                .await
+                .expect("lookup at expiry");
+            assert_eq!(after, None, "expired hash session must fail closed");
+
+            // Two rows with the same raw-looking id but different hashes:
+            // the hash match must win, and a raw id belonging to a hash-backed
+            // row must not be accepted for the other token.
+            let winner_hash = super::session_token_hash("winner-token");
+            client
+                .execute(
+                    "INSERT INTO sessions (session_id, session_hash, user_id, login, created_at) \
+                     VALUES ('same-raw-id', $1, 10, 'winner', 1000)",
+                    &[&winner_hash],
+                )
+                .await
+                .expect("insert winner row");
+            let winner = super::get_session(&client, "winner-token", 1_001)
+                .await
+                .expect("lookup winner");
+            assert_eq!(winner, Some((10, "winner".to_string())));
+            let raw_conflict = super::get_session(&client, "same-raw-id", 1_001)
+                .await
+                .expect("lookup raw conflict");
+            assert_eq!(raw_conflict, None);
         });
     }
 
